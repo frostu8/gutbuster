@@ -49,7 +49,7 @@ CREATE TABLE participant (
     id INTEGER PRIMARY KEY,
     -- Foreign keys
     user_id INTEGER NOT NULL REFERENCES user(id),
-    mogi_id INTEGER NOT NULL REFERENCES mogi(id),
+    event_id INTEGER NOT NULL REFERENCES event(id),
     -- How much score the player had at the end of the mogi
     -- If the mogi hasn't finished yet, this can be null.
     -- If the mogi is finished and this is null, this may have been a

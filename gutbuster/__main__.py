@@ -1,6 +1,7 @@
 from gutbuster.app import App
 from gutbuster.user import get_or_create_user
 from gutbuster.room import get_room
+from gutbuster.event import get_latest_active_event, create_event
 
 from dotenv import load_dotenv
 import discord
@@ -35,12 +36,22 @@ async def command_c(interaction: discord.Interaction):
 
         # Find the room
         room = await get_room(interaction.channel, conn)
-        if room is None:
+        if room is None or not room.enabled:
             await interaction.response.send_message(
                 "This channel isn't set up for mogis! Try /c'ing somewhere else.",
                 ephemeral=True,
             )
             return
+
+        # Get the currently active event
+        event = await get_latest_active_event(room, conn)
+        if event is None:
+            event = await create_event(room, conn)
+
+        name = interaction.user.nick or interaction.user.global_name
+        await interaction.response.send_message(
+            f"{name} has joined the mogi -- x players",
+        )
         await conn.commit()
 
 

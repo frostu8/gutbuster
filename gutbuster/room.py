@@ -1,5 +1,6 @@
 import discord
 import datetime
+from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -91,7 +92,9 @@ async def create_room(
     )
 
 
-async def get_room(channel: discord.TextChannel, conn: AsyncConnection) -> Room | None:
+async def get_room(
+    channel: discord.TextChannel, conn: AsyncConnection
+) -> Optional[Room]:
     """
     Gets a room of a channel.
 
@@ -115,6 +118,6 @@ async def get_room(channel: discord.TextChannel, conn: AsyncConnection) -> Room 
         id=row.id,
         channel=channel,
         enabled=row.enabled,
-        inserted_at=row.inserted_at,
-        updated_at=row.updated_at,
+        inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
+        updated_at=datetime.datetime.fromisoformat(row.updated_at),
     )
