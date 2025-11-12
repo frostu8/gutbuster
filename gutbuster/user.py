@@ -38,8 +38,9 @@ class User(object):
     Stores some information about the user, most importantly: their rating.
     """
 
-    id: int | None
-    user: discord.Object
+    id: int
+    user: discord.Member
+    name: str
     rating: Rating | None
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
@@ -47,20 +48,82 @@ class User(object):
     def __init__(
         self,
         *,
-        id: int | None = None,
-        user: discord.Object,
+        id: int,
+        user: discord.Member,
+        name: str,
         rating: Rating | None = None,
         inserted_at: datetime.datetime,
         updated_at: datetime.datetime,
     ):
         self.id = id
         self.user = user
+        self.name = name
         self.rating = rating
         self.inserted_at = inserted_at
         self.updated_at = updated_at
 
 
-async def get_or_init_user(discord_user: discord.Object, conn: AsyncConnection) -> User:
+async def get_user(discord_user: discord.Member, conn: AsyncConnection) -> User | None:
+    # Try to find the user if they exist
+    res = await conn.execute(
+        text("""
+        SELECT u.id, u.name, r.rating, r.deviation, u.inserted_at, u.updated_at
+        FROM user u
+        LEFT OUTER JOIN rating r
+        ON u.id = r.user_id
+        WHERE u.discord_user_id = :id
+        ORDER BY r.inserted_at DESC
+        LIMIT 1
+        """),
+        {"id": discord_user.id},
+    )
+
+    row = res.first()
+    if row is None:
+        return None
+
+    # Load information about the user
+    id = row.id
+    inserted_at = datetime.datetime.fromisoformat(row.inserted_at)
+    updated_at = datetime.datetime.fromisoformat(row.updated_at)
+
+    # Check if the username is stale
+    name = row.name
+    if not row.name == discord_user.name:
+        now = datetime.datetime.now()
+        await conn.execute(
+            text("""
+            UPDATE user
+            SET name = :name
+            WHERE id = :id, updated_at = :now
+            """),
+            {"id": id, "name": discord_user.name, "now": now.isoformat()},
+        )
+
+        name = discord_user.name
+
+    if row.rating is None or row.deviation is None:
+        # This user is unrated...
+        return User(
+            id=id,
+            user=discord_user,
+            name=name,
+            inserted_at=inserted_at,
+            updated_at=updated_at,
+        )
+    else:
+        # This user is rated!
+        return User(
+            id=id,
+            user=discord_user,
+            name=name,
+            rating=Rating(row.rating, row.deviation, user_id=id),
+            inserted_at=inserted_at,
+            updated_at=updated_at,
+        )
+
+
+async def get_or_create_user(discord_user: discord.Member, conn: AsyncConnection) -> User:
     """
     Gets a user from the database.
 
@@ -68,50 +131,28 @@ async def get_or_init_user(discord_user: discord.Object, conn: AsyncConnection) 
     """
 
     # Try to find the user if they exist
+    user = await get_user(discord_user, conn)
+    if user is not None:
+        return user
+
+    # Create the missing user
+    now = datetime.datetime.now()
+    name = discord_user.name
+
+    # Insert into database
     res = await conn.execute(
         text("""
-        SELECT u.id, r.rating, r.deviation, u.inserted_at, u.updated_at
-        FROM user u, rating r
-        WHERE
-            u.id = r.user_id
-            AND u.discord_user_id = :id
+        INSERT INTO user (discord_user_id, name, inserted_at, updated_at)
+        VALUES (:id, :name, :now, :now)
+        RETURNING id
         """),
-        {"id": discord_user.id},
+        {"id": discord_user.id, "name": name, "now": now.isoformat()},
     )
 
     row = res.first()
     if row is None:
-        # Create the missing user
-        now = datetime.datetime.now()
-        user = User(user=discord_user, inserted_at=now, updated_at=now)
+        raise ValueError("failed to get id of inserted row")
 
-        # Insert into database
-        await conn.execute(
-            text("""
-            INSERT INTO user (discord_user_id, inserted_at, updated_at)
-            VALUES (:id, :now, :now)
-            """),
-            {"id": discord_user.id, "now": now.isoformat()},
-        )
+    user = User(id=row.id, user=discord_user, name=name, inserted_at=now, updated_at=now)
 
-        return user
-    else:
-        # Load information about the user
-        id = row.id
-        inserted_at = datetime.datetime.fromisoformat(row.inserted_at)
-        updated_at = datetime.datetime.fromisoformat(row.updated_at)
-
-        if row.rating is None or row.deviation is None:
-            # This user is unrated...
-            return User(
-                id=id, user=discord_user, inserted_at=inserted_at, updated_at=updated_at
-            )
-        else:
-            # This user is rated!
-            return User(
-                id=id,
-                user=discord_user,
-                rating=Rating(row.rating, row.deviation, user_id=id),
-                inserted_at=inserted_at,
-                updated_at=updated_at,
-            )
+    return user

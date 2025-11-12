@@ -1,5 +1,6 @@
 from gutbuster.app import App
-from gutbuster.user import get_or_init_user
+from gutbuster.user import get_or_create_user
+from gutbuster.room import get_room
 
 from dotenv import load_dotenv
 import discord
@@ -15,6 +16,7 @@ load_dotenv()
 intents = discord.Intents.default()
 app = App(intents=intents)
 
+
 @app.tree.command(name="c", description="Queue into the mogi")
 async def command_c(interaction: discord.Interaction):
     """
@@ -23,16 +25,29 @@ async def command_c(interaction: discord.Interaction):
     Allows people to queue into the channel the command was sent in.
     """
 
-    # Fetch the user from the database
+    if interaction.channel is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
     async with app.db.connect() as conn:
-        user = await get_or_init_user(interaction.user, conn)
+        # Fetch the user from the database
+        user = await get_or_create_user(interaction.user, conn)
+
+        # Find the room
+        room = await get_room(interaction.channel, conn)
+        if room is None:
+            await interaction.response.send_message(
+                "This channel isn't set up for mogis! Try /c'ing somewhere else.",
+                ephemeral=True,
+            )
+            return
         await conn.commit()
 
+
 # Fetch our token
-token = os.getenv('DISCORD_TOKEN')
+token = os.getenv("DISCORD_TOKEN")
 if token is not None:
     app.run(token)
 else:
-    logger.error('Failed to get discord token! Set DISCORD_TOKEN in .env!')
+    logger.error("Failed to get discord token! Set DISCORD_TOKEN in .env!")
     sys.exit(1)
-

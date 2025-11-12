@@ -5,15 +5,18 @@ CREATE TABLE user (
     id INTEGER PRIMARY KEY,
     -- The discord ID of the user.
     discord_user_id BIGINT NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL UNIQUE,
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
 
+-- Ratings are insert-only.
 CREATE TABLE rating (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL UNIQUE REFERENCES user(id),
+    user_id INTEGER NOT NULL REFERENCES user(id),
     rating REAL NOT NULL,
-    deviation REAL NOT NULL
+    deviation REAL NOT NULL,
+    inserted_at TIMESTAMP NOT NULL
 );
 
 -- Each Discord channel can be host to a single Mogi room.
@@ -30,10 +33,11 @@ CREATE TABLE room (
 );
 
 -- Each room can only have one active mogi and many (>0) inactive mogis.
-CREATE TABLE mogi (
+CREATE TABLE event (
     id INTEGER PRIMARY KEY,
     -- A short ID to be used in contentions.
     short_id CHAR(8) NOT NULL UNIQUE,
+    room_id INTEGER NOT NULL REFERENCES room(id),
     -- Whether the mogi is active (either waiting for players or queuing)
     active BOOLEAN NOT NULL DEFAULT TRUE,
     inserted_at TIMESTAMP NOT NULL,
