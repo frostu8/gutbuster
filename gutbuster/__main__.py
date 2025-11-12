@@ -30,6 +30,11 @@ async def command_c(interaction: discord.Interaction):
         # Ignore any user commands
         raise ValueError("Command not being called in a guild context?")
 
+    name = interaction.user.nick or interaction.user.global_name
+
+    commands = await app.tree.fetch_commands()
+    command_d = next(c for c in commands if c.name == "d")
+
     async with app.db.connect() as conn:
         # Fetch the user from the database
         user = await get_or_create_user(interaction.user, conn)
@@ -48,10 +53,72 @@ async def command_c(interaction: discord.Interaction):
         if event is None:
             event = await create_event(room, conn)
 
-        name = interaction.user.nick or interaction.user.global_name
-        await interaction.response.send_message(
-            f"{name} has joined the mogi -- x players",
-        )
+        await event.preload_participants(conn)
+        if event.has(user):
+            await interaction.response.send_message(
+                f"{name}, you're already in the queue.\nUse </d:{command_d.id}> to drop from the queue.",
+                ephemeral=True,
+            )
+        else:
+            await event.join(user, conn)
+
+            player_count = len(event.participants or [])
+            await interaction.response.send_message(
+                f"{name} has joined the mogi -- {player_count} players\nUse </d:{command_d.id}> to drop from the queue.",
+            )
+
+        await conn.commit()
+
+
+@app.tree.command(name="d", description="Drop from the mogi")
+async def command_d(interaction: discord.Interaction):
+    """
+    The /d command.
+
+    Allows users to drop from the queue they have joined.
+    """
+
+
+    if interaction.channel is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
+    name = interaction.user.nick or interaction.user.global_name
+
+    commands = await app.tree.fetch_commands()
+    command_c = next(c for c in commands if c.name == "c")
+
+    async with app.db.connect() as conn:
+        # Fetch the user from the database
+        user = await get_or_create_user(interaction.user, conn)
+
+        # Find the room
+        room = await get_room(interaction.channel, conn)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel isn't set up for mogis! Try /c'ing somewhere else.",
+                ephemeral=True,
+            )
+            return
+
+        # Get the currently active event
+        event = await get_latest_active_event(room, conn)
+        if event is None:
+            event = await create_event(room, conn)
+
+        await event.preload_participants(conn)
+        if event.has(user):
+            await event.leave(user, conn)
+            player_count = len(event.participants or [])
+            await interaction.response.send_message(
+                f"{name} has dropped from the mogi -- {player_count} players\nUse </c:{command_c.id}> to enter the queue.",
+            )
+        else:
+            await interaction.response.send_message(
+                f"{name}, you're not in the queue.\nUse </c:{command_c.id}> to enter the queue.",
+                ephemeral=True,
+            )
+
         await conn.commit()
 
 
