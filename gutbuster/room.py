@@ -1,10 +1,12 @@
 import discord
 import datetime
+from dataclasses import dataclass, field
 from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 
+@dataclass(kw_only=True)
 class Room(object):
     """
     A single event room.
@@ -14,24 +16,10 @@ class Room(object):
 
     id: int
     channel: discord.TextChannel
-    enabled: bool
+    enabled: bool = field(default=True)
+    players_required: int = field(default=8)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
-
-    def __init__(
-        self,
-        *,
-        id: int,
-        channel: discord.TextChannel,
-        enabled: bool = True,
-        inserted_at: datetime.datetime,
-        updated_at: datetime.datetime,
-    ):
-        self.id = id
-        self.channel = channel
-        self.enabled = enabled
-        self.inserted_at = inserted_at
-        self.updated_at = updated_at
 
     async def _set_enabled(self, enabled: bool, conn: AsyncConnection):
         """
@@ -88,7 +76,11 @@ async def create_room(
         raise ValueError("failed to get id of new room")
 
     return Room(
-        id=row.id, channel=channel, enabled=enabled, inserted_at=now, updated_at=now
+        id=row.id,
+        channel=channel,
+        enabled=enabled,
+        inserted_at=now,
+        updated_at=now,
     )
 
 
@@ -103,7 +95,7 @@ async def get_room(
 
     res = await conn.execute(
         text("""
-        SELECT id, enabled, inserted_at, updated_at
+        SELECT id, enabled, players_required, inserted_at, updated_at
         FROM room
         WHERE discord_channel_id = :id
         """),
@@ -118,6 +110,7 @@ async def get_room(
         id=row.id,
         channel=channel,
         enabled=row.enabled,
+        players_required=row.players_required,
         inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
         updated_at=datetime.datetime.fromisoformat(row.updated_at),
     )

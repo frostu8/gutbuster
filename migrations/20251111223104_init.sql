@@ -28,6 +28,8 @@ CREATE TABLE room (
     -- There isn't any reason for this to be false, but it's useful for
     -- querying
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    -- How many players are required before the mogi can start.
+    players_required INTEGER NOT NULL DEFAULT 8,
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
@@ -38,8 +40,15 @@ CREATE TABLE event (
     -- A short ID to be used in contentions.
     short_id CHAR(8) NOT NULL UNIQUE,
     room_id INTEGER NOT NULL REFERENCES room(id),
-    -- Whether the mogi is active (either waiting for players or queuing)
-    active BOOLEAN NOT NULL DEFAULT TRUE,
+    -- The status of the mogi
+    -- 0 - LFG, the mogi is waiting for enough players.
+    -- 1 - STARTED, the mogi is either voting for a format or playing.
+    -- 2 - ENDED, the mogi is over and no longer considered active.
+    status INTEGER NOT NULL DEFAULT 0,
+    -- The format for the mogi.
+    -- May be NULL if the mogi's format hasn't been formatted or randomly
+    -- selected.
+    format INTEGER,
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );

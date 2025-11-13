@@ -2,6 +2,9 @@ import datetime
 import string
 import random
 import logging
+import discord
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Optional, List
 from gutbuster.room import Room
 from gutbuster.user import User, Rating
@@ -12,6 +15,13 @@ from sqlalchemy.exc import IntegrityError
 logger = logging.getLogger(__name__)
 
 
+class EventStatus(Enum):
+    LFG = 0
+    STARTED = 1
+    ENDED = 2
+
+
+@dataclass(kw_only=True)
 class Participant(object):
     """
     A single participant in a mogi.
@@ -21,32 +31,14 @@ class Participant(object):
 
     id: int
     event_id: int
-    user_id: int
+    user: User
     rating: Optional[Rating]
-    score: Optional[int]
+    score: Optional[int] = field(default=None)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
 
-    def __init__(
-        self,
-        *,
-        id: int,
-        event_id: int,
-        user_id: int,
-        rating: Optional[Rating] = None,
-        score: Optional[int] = None,
-        inserted_at: datetime.datetime,
-        updated_at: datetime.datetime,
-    ):
-        self.id = id
-        self.event_id = event_id
-        self.user_id = user_id
-        self.rating = rating
-        self.score = score
-        self.inserted_at = inserted_at
-        self.updated_at = updated_at
 
-
+@dataclass(kw_only=True)
 class Event(object):
     """
     An event, or a "mogi."
@@ -55,29 +47,10 @@ class Event(object):
     id: int
     short_id: str
     room: Room
-    participants: Optional[List[Participant]]
-    active: bool
+    participants: Optional[List[Participant]] = field(default=None)
+    status: EventStatus = field(default=EventStatus.LFG)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
-
-    def __init__(
-        self,
-        *,
-        id: int,
-        short_id: str,
-        room: Room,
-        active: bool,
-        participants: Optional[List[Participant]] = None,
-        inserted_at: datetime.datetime,
-        updated_at: datetime.datetime,
-    ):
-        self.id = id
-        self.short_id = short_id
-        self.room = room
-        self.active = active
-        self.participants = participants
-        self.inserted_at = inserted_at
-        self.updated_at = updated_at
 
     async def preload_participants(self, conn: AsyncConnection):
         """
@@ -104,26 +77,40 @@ class Event(object):
                 p.user_id,
                 p.score,
                 p.inserted_at,
-                p.updated_at
-            FROM participant p
+                p.updated_at,
+                u.name,
+                u.discord_user_id,
+                u.inserted_at AS user_inserted_at,
+                u.updated_at AS user_updated_at
+            FROM participant p, user u
             LEFT OUTER JOIN recent_ratings r
             ON r.user_id = p.user_id
-            WHERE p.event_id = :event_id
+            WHERE
+                p.user_id = u.id
+                AND p.event_id = :event_id
             """),
             {"event_id": self.id, "inserted_at": self.inserted_at.isoformat()},
         )
 
         self.participants = []
         for row in res:
+            user = User(
+                id=row.user_id,
+                user=discord.Object(row.discord_user_id),
+                name=row.name,
+                inserted_at=datetime.datetime.fromisoformat(row.user_inserted_at),
+                updated_at=datetime.datetime.fromisoformat(row.user_updated_at),
+            )
             participant = Participant(
                 id=row.id,
                 event_id=self.id,
-                user_id=row.user_id,
+                user=user,
                 rating=Rating(row.rating, row.deviation, user_id=row.user_id),
                 score=row.score,
                 inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
                 updated_at=datetime.datetime.fromisoformat(row.updated_at),
             )
+
             self.participants.append(participant)
 
     def get_participants(self) -> List[Participant]:
@@ -144,7 +131,31 @@ class Event(object):
         if self.participants is None:
             raise ValueError("participants not preloaded")
 
-        return next((True for p in self.participants if p.id == user.id), False)
+        return any(p.user.id == user.id for p in self.participants)
+
+    def is_active(self) -> bool:
+        """
+        Checks if the event is active
+        """
+
+        return self.status == EventStatus.LFG or self.status == EventStatus.STARTED
+
+    async def set_status(self, status: EventStatus, conn: AsyncConnection) -> None:
+        """
+        Changes the event status.
+        """
+
+        now = datetime.datetime.now()
+        await conn.execute(
+            text("""
+            UPDATE event
+            SET status = :status, updated_at = :now
+            WHERE id = :event_id
+            """),
+            {"event_id": self.id, "now": now.isoformat(), "status": status.value},
+        )
+
+        self.status = status
 
     async def join(self, user: User, conn: AsyncConnection) -> Participant:
         """
@@ -154,7 +165,6 @@ class Event(object):
         """
 
         now = datetime.datetime.now()
-
         res = await conn.execute(
             text("""
             INSERT INTO participant (user_id, event_id, inserted_at, updated_at)
@@ -171,7 +181,7 @@ class Event(object):
         participant = Participant(
             id=row.id,
             event_id=self.id,
-            user_id=user.id,
+            user=user,
             rating=user.rating,
             inserted_at=now,
             updated_at=now,
@@ -201,7 +211,9 @@ class Event(object):
 
         if res.rowcount > 0:
             if self.participants is not None:
-                self.participants = [p for p in self.participants if not p.user_id == user.id]
+                self.participants = [
+                    p for p in self.participants if not p.user.id == user.id
+                ]
         else:
             raise ValueError("cannot remove user that isn't participating")
 
@@ -241,7 +253,6 @@ async def create_event(room: Room, conn: AsyncConnection) -> Event:
                 id=row.id,
                 short_id=short_id,
                 room=room,
-                active=True,
                 inserted_at=now,
                 updated_at=now,
             )
@@ -260,9 +271,11 @@ async def get_latest_active_event(room: Room, conn: AsyncConnection) -> Optional
 
     res = await conn.execute(
         text("""
-        SELECT id, short_id, active, inserted_at, updated_at
+        SELECT id, short_id, status, inserted_at, updated_at
         FROM event
-        WHERE room_id = :room_id AND active
+        WHERE
+            room_id = :room_id
+            AND (status = 0 OR status = 1)
         ORDER BY inserted_at DESC
         LIMIT 1
         """),
@@ -280,7 +293,7 @@ async def get_latest_active_event(room: Room, conn: AsyncConnection) -> Optional
         id=row.id,
         short_id=row.short_id,
         room=room,
-        active=row.active,
+        status=EventStatus(row.status),
         inserted_at=inserted_at,
         updated_at=updated_at,
     )

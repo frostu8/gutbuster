@@ -1,7 +1,11 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 import discord
+from dataclasses import dataclass, field
 import datetime
+
+
+type Member = discord.User | discord.Member
 
 
 # Every fiber in my body tells me this is very bad and is going to cause a Fuck
@@ -10,6 +14,7 @@ import datetime
 # class RatedUser(User):
 # Nope, nevermind. I am too much of a pussy. I am not strong enough for the
 # miseries of OOP. Not built for these streets.
+@dataclass(kw_only=True)
 class Rating(object):
     """
     A user's rating.
@@ -31,6 +36,7 @@ class Rating(object):
         self.deviation = deviation
 
 
+@dataclass(kw_only=True)
 class User(object):
     """
     A Gutbuster user.
@@ -39,31 +45,29 @@ class User(object):
     """
 
     id: int
-    user: discord.Member
+    user: Member | discord.Object
     name: str
-    rating: Rating | None
+    rating: Rating | None = field(default=None)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
 
-    def __init__(
-        self,
-        *,
-        id: int,
-        user: discord.Member,
-        name: str,
-        rating: Rating | None = None,
-        inserted_at: datetime.datetime,
-        updated_at: datetime.datetime,
-    ):
-        self.id = id
-        self.user = user
-        self.name = name
-        self.rating = rating
-        self.inserted_at = inserted_at
-        self.updated_at = updated_at
+    async def fetch_user(self, app: discord.Client) -> Member:
+        """
+        Fetches the Discord user associated with this user.
+        """
+
+        if isinstance(self.user, discord.User | discord.Member):
+            return self.user
+        else:
+            discord_user = app.get_user(self.user.id)
+            if discord_user is None:
+                # Fetch from the API instead
+                discord_user = await app.fetch_user(self.user.id)
+            self.user = discord_user
+            return self.user
 
 
-async def get_user(discord_user: discord.Member, conn: AsyncConnection) -> User | None:
+async def get_user(discord_user: Member, conn: AsyncConnection) -> User | None:
     # Try to find the user if they exist
     res = await conn.execute(
         text("""
@@ -123,7 +127,7 @@ async def get_user(discord_user: discord.Member, conn: AsyncConnection) -> User 
         )
 
 
-async def get_or_create_user(discord_user: discord.Member, conn: AsyncConnection) -> User:
+async def get_or_create_user(discord_user: Member, conn: AsyncConnection) -> User:
     """
     Gets a user from the database.
 
@@ -153,6 +157,8 @@ async def get_or_create_user(discord_user: discord.Member, conn: AsyncConnection
     if row is None:
         raise ValueError("failed to get id of inserted row")
 
-    user = User(id=row.id, user=discord_user, name=name, inserted_at=now, updated_at=now)
+    user = User(
+        id=row.id, user=discord_user, name=name, inserted_at=now, updated_at=now
+    )
 
     return user
