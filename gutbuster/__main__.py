@@ -1,10 +1,12 @@
 from gutbuster.app import App
-from gutbuster.user import get_or_create_user
+from gutbuster.user import get_or_create_user, get_user
 from gutbuster.room import get_room
 from gutbuster.event import get_latest_active_event, create_event
 
 from dotenv import load_dotenv
+from sqlalchemy import text
 import discord
+from discord import AllowedMentions
 import logging
 import os
 import sys
@@ -38,6 +40,7 @@ async def command_c(interaction: discord.Interaction):
     async with app.db.connect() as conn:
         # Fetch the user from the database
         user = await get_or_create_user(interaction.user, conn)
+        await conn.commit()
 
         # Find the room
         room = await get_room(interaction.channel, conn)
@@ -78,7 +81,6 @@ async def command_d(interaction: discord.Interaction):
     Allows users to drop from the queue they have joined.
     """
 
-
     if interaction.channel is None:
         # Ignore any user commands
         raise ValueError("Command not being called in a guild context?")
@@ -91,6 +93,7 @@ async def command_d(interaction: discord.Interaction):
     async with app.db.connect() as conn:
         # Fetch the user from the database
         user = await get_or_create_user(interaction.user, conn)
+        await conn.commit()
 
         # Find the room
         room = await get_room(interaction.channel, conn)
@@ -120,6 +123,64 @@ async def command_d(interaction: discord.Interaction):
             )
 
         await conn.commit()
+
+
+@app.tree.command(name="l", description="Lists all players in the mogi")
+async def command_l(interaction: discord.Interaction):
+    """
+    The /l command.
+
+    Lists all users in the current room.
+    """
+
+    if interaction.channel is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
+    async with app.db.connect() as conn:
+        # Fetch the user from the database
+        user = await get_or_create_user(interaction.user, conn)
+        await conn.commit()
+
+        # Find the room
+        room = await get_room(interaction.channel, conn)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel isn't set up for mogis! Try /c'ing somewhere else.",
+                ephemeral=True,
+            )
+            return
+
+        # Get the currently active event
+        event = await get_latest_active_event(room, conn)
+        if event is None:
+            event = await create_event(room, conn)
+
+        await event.preload_participants(conn)
+
+        # Build the mogi list
+        message = "**Mogi List**"
+        for i, participant in enumerate(event.get_participants()):
+            res = await conn.execute(
+                text("SELECT name, discord_user_id FROM user WHERE id = :user_id"),
+                {"user_id": participant.user_id},
+            )
+
+            row = res.first()
+            if row is None:
+                raise ValueError(f"failed to get existing user {participant.user_id}")
+
+            discord_user = app.get_user(row.discord_user_id)
+            if discord_user is None:
+                # try to get from API if it isn't in cache
+                discord_user = await app.fetch_user(row.discord_user_id)
+
+            if discord_user is None:
+                message += (f"\n`{i + 1}.` @{row.name}")
+            else:
+                message += (f"\n`{i + 1}.` {discord_user.mention}")
+
+        await interaction.response.send_message(message, allowed_mentions=AllowedMentions.none())
 
 
 # Fetch our token

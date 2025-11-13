@@ -126,6 +126,14 @@ class Event(object):
             )
             self.participants.append(participant)
 
+    def get_participants(self) -> List[Participant]:
+        """
+        Returns the list of participants.
+
+        Returns an empty list if the participants isn't preloaded.
+        """
+        return self.participants or []
+
     def has(self, user: User):
         """
         Checks if a user is in this event.
