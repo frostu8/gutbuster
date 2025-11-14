@@ -64,13 +64,14 @@ class Event(object):
         res = await conn.execute(
             text("""
             WITH recent_ratings AS (
-                SELECT r1.user_id, r1.rating, r1.deviation
+                SELECT r1.id, r1.user_id, r1.rating, r1.deviation
                 FROM rating r1, rating r2
                 WHERE r2.inserted_at <= :inserted_at
-                GROUP BY r1.user_id, r1.inserted_at, r1.rating, r1.deviation
+                GROUP BY r1.id, r1.user_id, r1.inserted_at, r1.rating, r1.deviation
                 HAVING r1.inserted_at = MAX(r2.inserted_at)
             )
             SELECT
+                r.id AS rating_id,
                 r.rating,
                 r.deviation,
                 p.id,
@@ -105,7 +106,9 @@ class Event(object):
                 id=row.id,
                 event_id=self.id,
                 user=user,
-                rating=Rating(row.rating, row.deviation, user_id=row.user_id),
+                rating=Rating(
+                    row.rating, row.deviation, id=row.rating_id, user_id=row.user_id
+                ),
                 score=row.score,
                 inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
                 updated_at=datetime.datetime.fromisoformat(row.updated_at),
@@ -137,7 +140,6 @@ class Event(object):
         """
         Checks if the event is active
         """
-
         return self.status == EventStatus.LFG or self.status == EventStatus.STARTED
 
     async def set_status(self, status: EventStatus, conn: AsyncConnection) -> None:
@@ -217,6 +219,21 @@ class Event(object):
         else:
             raise ValueError("cannot remove user that isn't participating")
 
+    async def delete(self, conn: AsyncConnection) -> None:
+        """
+        Deletes an event.
+
+        The event is now invalidated after this call.
+        """
+
+        await conn.execute(
+            text("""
+            DELETE FROM event
+            WHERE id = :id
+            """),
+            {"id": self.id},
+        )
+
 
 def _generate_id(length: int) -> str:
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
@@ -261,6 +278,7 @@ async def create_event(room: Room, conn: AsyncConnection) -> Event:
             logger.warning(e)
             pass
 
+    await event.preload_participants(conn)
     return event
 
 
@@ -289,7 +307,7 @@ async def get_latest_active_event(room: Room, conn: AsyncConnection) -> Optional
     inserted_at = datetime.datetime.fromisoformat(row.inserted_at)
     updated_at = datetime.datetime.fromisoformat(row.updated_at)
 
-    return Event(
+    event = Event(
         id=row.id,
         short_id=row.short_id,
         room=room,
@@ -297,3 +315,6 @@ async def get_latest_active_event(room: Room, conn: AsyncConnection) -> Optional
         inserted_at=inserted_at,
         updated_at=updated_at,
     )
+
+    await event.preload_participants(conn)
+    return event

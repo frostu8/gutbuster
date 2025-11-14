@@ -1,3 +1,8 @@
+-- Server list
+CREATE TABLE server (
+    
+);
+
 -- We need to store some basic information about users
 -- In Duel Channel, MMR is tied to your player profile, but here it should be
 -- tied to your Discord user.
@@ -10,13 +15,15 @@ CREATE TABLE user (
     updated_at TIMESTAMP NOT NULL
 );
 
--- Ratings are insert-only.
+-- Ratings are typically insert only
+-- They may be updated retroactively to refund MMR.
 CREATE TABLE rating (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES user(id),
     rating REAL NOT NULL,
     deviation REAL NOT NULL,
-    inserted_at TIMESTAMP NOT NULL
+    inserted_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
 );
 
 -- Each Discord channel can be host to a single Mogi room.
@@ -34,6 +41,20 @@ CREATE TABLE room (
     updated_at TIMESTAMP NOT NULL
 );
 
+-- Each room can have >0 formats.
+CREATE TABLE event_format (
+    id INTEGER PRIMARY KEY,
+    -- The room this format is a part of
+    room_id INTEGER NOT NULL REFERENCES room(id),
+    -- The name of the format
+    name VARCHAR(255) NOT NULL,
+    -- Team balancing mode of the format
+    -- 0 - FFA
+    -- 1 - Half v Half
+    -- 2 - Quarter v Quarter v Quarter v Quarter
+    team_mode INTEGER NOT NULL DEFAULT 0
+);
+
 -- Each room can only have one active mogi and many (>0) inactive mogis.
 CREATE TABLE event (
     id INTEGER PRIMARY KEY,
@@ -48,7 +69,7 @@ CREATE TABLE event (
     -- The format for the mogi.
     -- May be NULL if the mogi's format hasn't been formatted or randomly
     -- selected.
-    format INTEGER,
+    format INTEGER REFERENCES event_format(id),
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
@@ -59,6 +80,9 @@ CREATE TABLE participant (
     -- Foreign keys
     user_id INTEGER NOT NULL REFERENCES user(id),
     event_id INTEGER NOT NULL REFERENCES event(id),
+    -- Records the player's current MMR.
+    -- This is a little more specific than timestamps.
+    rating_id INTEGER REFERENCES rating(id),
     -- How much score the player had at the end of the mogi
     -- If the mogi hasn't finished yet, this can be null.
     -- If the mogi is finished and this is null, this may have been a
@@ -69,19 +93,21 @@ CREATE TABLE participant (
     updated_at TIMESTAMP NOT NULL
 );
 
--- Finally, player penalties.
-CREATE TABLE penalty (
+-- Finally, player modifications.
+CREATE TABLE player_mod (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES user(id),
-    -- The reason the penalty was applied
+    -- The reason the modification was applied
     reason INTEGER NOT NULL,
     -- How many "strikes" this penalty counts as. Set this to 0 for
-    -- documentation purposes.
-    strikes INTEGER NOT NULL DEFAULT 1,
-    -- A specific human-readable string of why the strike was placed.
+    -- documentation purposes, or to give MMR bonuses.
+    strikes INTEGER NOT NULL DEFAULT 0,
+    -- The rating penalty or bonus
+    rating INTEGER NOT NULL DEFAULT 0,
+    -- A specific human-readable string of why the modification was placed.
     notes VARCHAR(2000) NOT NULL,
-    -- When the strike expires at
-    expires_at TIMESTAMP NOT NULL,
+    -- When the strikes expire at
+    strikes_expire_at TIMESTAMP NOT NULL,
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );

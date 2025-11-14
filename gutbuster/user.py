@@ -14,27 +14,16 @@ type Member = discord.User | discord.Member
 # class RatedUser(User):
 # Nope, nevermind. I am too much of a pussy. I am not strong enough for the
 # miseries of OOP. Not built for these streets.
-@dataclass(kw_only=True)
+@dataclass
 class Rating(object):
     """
     A user's rating.
     """
 
-    user_id: int
+    id: int = field(kw_only=True)
+    user_id: int = field(kw_only=True)
     rating: float
     deviation: float
-
-    def __init__(
-        self,
-        rating: float,
-        deviation: float,
-        *,
-        user_id: int,
-    ):
-        self.user_id = user_id
-        self.rating = rating
-        self.deviation = deviation
-
 
 @dataclass(kw_only=True)
 class User(object):
@@ -71,7 +60,7 @@ async def get_user(discord_user: Member, conn: AsyncConnection) -> User | None:
     # Try to find the user if they exist
     res = await conn.execute(
         text("""
-        SELECT u.id, u.name, r.rating, r.deviation, u.inserted_at, u.updated_at
+        SELECT u.id, u.name, r.id AS rating_id, r.rating, r.deviation, u.inserted_at, u.updated_at
         FROM user u
         LEFT OUTER JOIN rating r
         ON u.id = r.user_id
@@ -121,7 +110,7 @@ async def get_user(discord_user: Member, conn: AsyncConnection) -> User | None:
             id=id,
             user=discord_user,
             name=name,
-            rating=Rating(row.rating, row.deviation, user_id=id),
+            rating=Rating(row.rating, row.deviation, id=row.rating_id, user_id=id),
             inserted_at=inserted_at,
             updated_at=updated_at,
         )

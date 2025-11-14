@@ -1,9 +1,19 @@
 import discord
 import datetime
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
+
+
+@dataclass
+class EventFormat(object):
+    """
+    An event format
+    """
+
+    id: int
+    name: str = field(kw_only=True)
 
 
 @dataclass(kw_only=True)
@@ -18,8 +28,23 @@ class Room(object):
     channel: discord.TextChannel
     enabled: bool = field(default=True)
     players_required: int = field(default=8)
+    formats: List[EventFormat] = field(default_factory=lambda: [])
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
+
+    async def preload_formats(self, conn: AsyncConnection):
+        """
+        Loads the list of formats the room supports.
+        """
+
+        # TODO: load event formats
+        formats = [
+            EventFormat(1, name="FFA"),
+            EventFormat(2, name="4v4"),
+            EventFormat(3, name="2v2v2v2"),
+        ]
+
+        self.formats = formats
 
     async def _set_enabled(self, enabled: bool, conn: AsyncConnection):
         """
@@ -75,13 +100,17 @@ async def create_room(
     if row is None:
         raise ValueError("failed to get id of new room")
 
-    return Room(
+    room = Room(
         id=row.id,
         channel=channel,
         enabled=enabled,
         inserted_at=now,
         updated_at=now,
     )
+
+    # We can safely say there's no formats on newly created rooms
+    #await room.preload_formats(conn)
+    return room
 
 
 async def get_room(
@@ -106,7 +135,7 @@ async def get_room(
     if row is None:
         return None
 
-    return Room(
+    room = Room(
         id=row.id,
         channel=channel,
         enabled=row.enabled,
@@ -114,3 +143,6 @@ async def get_room(
         inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
         updated_at=datetime.datetime.fromisoformat(row.updated_at),
     )
+
+    await room.preload_formats(conn)
+    return room
