@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 import discord
 from discord import AllowedMentions, ButtonStyle, ui
+from discord.app_commands import default_permissions
 import datetime
 import asyncio
 import math
@@ -56,7 +57,9 @@ class VoteEntry(ui.Section):
         # Generate a button for each format
         class VoteButton(ui.Button):
             def __init__(self, *, disabled: bool = False):
-                super().__init__(style=ButtonStyle.blurple, label="Vote", disabled=disabled)
+                super().__init__(
+                    style=ButtonStyle.blurple, label="Vote", disabled=disabled
+                )
 
             async def callback(self, interaction: discord.Interaction):
                 await func(interaction, format)
@@ -132,7 +135,14 @@ class VoteView(ui.LayoutView):
     expiry_time: datetime.datetime
     expiry_task: Optional[asyncio.Task]
 
-    def __init__(self, event: Event, *, flavor: Optional[str] = None, votes_needed: int = 4, expiry_time: datetime.datetime):
+    def __init__(
+        self,
+        event: Event,
+        *,
+        flavor: Optional[str] = None,
+        votes_needed: int = 4,
+        expiry_time: datetime.datetime,
+    ):
         super().__init__()
         self.flavor_text = flavor
 
@@ -293,8 +303,12 @@ async def start_event(event: Event, conn: AsyncConnection) -> None:
     expiry = datetime.timedelta(seconds=120)
     expiry_time = datetime.datetime.now() + expiry
 
-    view = VoteView(event, flavor=random_message, expiry_time=expiry_time, votes_needed=4)
-    view.message = await channel.send(allowed_mentions=view.allowed_mentions(), view=view)
+    view = VoteView(
+        event, flavor=random_message, expiry_time=expiry_time, votes_needed=4
+    )
+    view.message = await channel.send(
+        allowed_mentions=view.allowed_mentions(), view=view
+    )
     view.wait_until_expiry()
 
 
@@ -457,13 +471,16 @@ async def command_l(interaction: discord.Interaction):
         )
 
 
-@app.tree.command(name="end", description="Ends the current mogi and starts a new one")
-async def command_end(interaction: discord.Interaction):
+@app.tree.command(
+    name="clear", description="Forcibly ends the current mogi and starts a new one"
+)
+@default_permissions(None)
+async def command_clear(interaction: discord.Interaction):
     """
-    The /end command.
+    The /clear command.
 
-    Concludes a mogi. Any player may start a new mogi in the channel by using
-    /c.
+    Forcibly ends a mogi. Any player may start a new mogi in the channel by
+    using /c.
     """
 
     if interaction.channel is None:
@@ -471,10 +488,6 @@ async def command_end(interaction: discord.Interaction):
         raise ValueError("Command not being called in a guild context?")
 
     async with app.db.connect() as conn:
-        # Fetch the user from the database
-        user = await get_or_create_user(interaction.user, conn)
-        await conn.commit()
-
         # Find the room
         room = await get_room(interaction.channel, conn)
         if room is None or not room.enabled:
@@ -486,6 +499,12 @@ async def command_end(interaction: discord.Interaction):
 
         # Get the currently active event
         event = await get_latest_active_event(room, conn)
+        if event is not None:
+            await event.delete(conn)
+
+        await interaction.response.send_message(
+            "The mogi queue has been cleared.",
+        )
 
 
 # Fetch our token
