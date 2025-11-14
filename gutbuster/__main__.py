@@ -12,7 +12,6 @@ import discord
 from discord import AllowedMentions, ButtonStyle, ui
 from discord.app_commands import default_permissions
 import datetime
-import asyncio
 import math
 import random
 import logging
@@ -132,26 +131,25 @@ class VoteView(ui.LayoutView):
     votes_needed: int
 
     selected_format: Optional[EventFormat] = None
-    expiry_time: datetime.datetime
-    expiry_task: Optional[asyncio.Task]
+    timeout_time: datetime.datetime
 
     def __init__(
         self,
         event: Event,
         *,
+        timeout: int | float = 120.0,
         flavor: Optional[str] = None,
         votes_needed: int = 4,
-        expiry_time: datetime.datetime,
     ):
-        super().__init__()
+        super().__init__(timeout=timeout)
         self.flavor_text = flavor
 
         self.event = event
         self.votes_needed = votes_needed
 
-        self.expired = False
-        self.expiry_time = expiry_time
-        self.expiry_task = None
+        self.timeout_time = datetime.datetime.now() + datetime.timedelta(
+            seconds=timeout
+        )
 
         for i, format in enumerate(event.room.formats):
             view = VoteEntry(format, self.vote, votes_needed=self.votes_needed)
@@ -159,13 +157,6 @@ class VoteView(ui.LayoutView):
             self.container.add_item(view)
 
         self.update_header()
-
-    def __del__(self):
-        self.cancel_expiry()
-
-    def cancel_expiry(self) -> None:
-        if self.expiry_task:
-            self.expiry_task.cancel()
 
     def allowed_mentions(self) -> AllowedMentions:
         allowed_mentions = AllowedMentions.none()
@@ -192,20 +183,23 @@ class VoteView(ui.LayoutView):
         if self.selected_format is None:
             header += (
                 f"\n\nMogi `{self.event.short_id}` has gathered. Vote for a format."
-                f" Voting ends when a format gets 4 votes, or <t:{math.trunc(self.expiry_time.timestamp())}:R>"
+                f" Voting ends when a format gets 4 votes, or <t:{math.trunc(self.timeout_time.timestamp())}:R>"
             )
         else:
             header += (
                 f"\n\nMogi `{self.event.short_id}` has gathered."
-                f" Voting concluded. Format {self.selected_format.name} selected!"
+                f" Voting concluded. **Format {self.selected_format.name} selected!**"
             )
 
         # update container
         self.container.header.content = header
 
-    async def close_vote(self, *, cancel: bool = True) -> None:
-        if cancel:
-            self.cancel_expiry()
+    async def close_vote(self) -> None:
+        """
+        Closes the vote.
+
+        This also calls `stop` to disable further interactions.
+        """
 
         votes = [v for v in self.formats]
 
@@ -218,32 +212,24 @@ class VoteView(ui.LayoutView):
 
         for format in self.formats:
             format.disabled = True
+            format.anonymized = False
+
+        if not self.is_finished():
+            self.stop()
 
         # Update the message
         if self.message is not None:
             await self.message.edit(allowed_mentions=self.allowed_mentions(), view=self)
 
-    async def _wait_until_expiry(self):
-        now = datetime.datetime.now()
-        await asyncio.sleep((self.expiry_time - now).total_seconds())
-
-        # DON'T CANCEL THE THREAD CALLING THIS FUNCTION!
-        await self.close_vote(cancel=False)
-
-    def wait_until_expiry(self):
-        """
-        Waits until the vote expires, and then closes it.
-        """
-
-        loop = asyncio.get_event_loop()
-        self.expiry_task = loop.create_task(self._wait_until_expiry())
+    async def on_timeout(self) -> None:
+        await self.close_vote()
 
     async def vote(self, interaction: discord.Interaction, format: EventFormat):
         should_close = False
 
         # Do nothing if the vote is closed.
         # Do nothing if this user isn't part of the mogi's starting selection
-        if not self.expired and any(
+        if self.selected_format is None and any(
             p.user.user.id == interaction.user.id for p in self.event.get_participants()
         ):
             # Remove user from other votes
@@ -299,17 +285,10 @@ async def start_event(event: Event, conn: AsyncConnection) -> None:
     if len(config.messages.gathered) > 0:
         random_message = random.choice(config.messages.gathered)
 
-    # Get expiry time
-    expiry = datetime.timedelta(seconds=120)
-    expiry_time = datetime.datetime.now() + expiry
-
-    view = VoteView(
-        event, flavor=random_message, expiry_time=expiry_time, votes_needed=4
-    )
+    view = VoteView(event, flavor=random_message, timeout=30, votes_needed=4)
     view.message = await channel.send(
         allowed_mentions=view.allowed_mentions(), view=view
     )
-    view.wait_until_expiry()
 
 
 @app.tree.command(name="c", description="Queue into the mogi")
