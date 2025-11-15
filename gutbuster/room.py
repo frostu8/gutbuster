@@ -1,9 +1,18 @@
 import discord
 import datetime
+from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
+
+
+class FormatSelectMode(Enum):
+    """
+    How to select formats in an event.
+    """
+    VOTE = 0
+    RANDOM = 1
 
 
 @dataclass
@@ -25,9 +34,12 @@ class Room(object):
     """
 
     id: int
-    channel: discord.TextChannel
+    discord_guild_id: int
+    channel: discord.TextChannel | discord.Object
     enabled: bool = field(default=True)
     players_required: int = field(default=8)
+    format_selection_mode: FormatSelectMode = field(default=FormatSelectMode.VOTE)
+    votes_required: int = field(default=4)
     formats: List[EventFormat] = field(default_factory=lambda: [])
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
@@ -37,27 +49,55 @@ class Room(object):
         Loads the list of formats the room supports.
         """
 
-        # TODO: load event formats
-        formats = [
-            EventFormat(1, name="FFA"),
-            EventFormat(2, name="4v4"),
-            EventFormat(3, name="2v2v2v2"),
-        ]
+        res = await conn.execute(
+            text("""
+            SELECT id, name
+            FROM event_format
+            WHERE room_id = :room_id
+            """),
+            {"room_id": self.id},
+        )
 
-        self.formats = formats
+        self.formats.clear()
+        for row in res:
+            format = EventFormat(row.id, name=row.name)
+            self.formats.append(format)
+
+    async def add_format(self, name: str, conn: AsyncConnection) -> EventFormat:
+        """
+        Adds a format to the room.
+        """
+
+        res = await conn.execute(
+            text("""
+            INSERT INTO event_format (room_id, name)
+            VALUES (:room_id, :name)
+            RETURNING id
+            """),
+            {"room_id": self.id, "name": name},
+        )
+
+        row = res.first()
+        if row is None:
+            raise ValueError("failed to get id of new row")
+
+        format = EventFormat(row.id, name=name)
+        self.formats.append(format)
+        return format
 
     async def _set_enabled(self, enabled: bool, conn: AsyncConnection):
         """
         Sets the enabled status of a room.
         """
 
+        now = datetime.datetime.now()
         await conn.execute(
             text("""
             UPDATE room
-            SET enabled = :enabled
+            SET enabled = :enabled, updated_at = :now
             WHERE id = :id
             """),
-            {"id": self.id, "enabled": self.enabled},
+            {"id": self.id, "enabled": self.enabled, "now": now.isoformat()},
         )
 
         self.enabled = enabled
@@ -66,7 +106,7 @@ class Room(object):
         """
         Enables a room.
         """
-        self._set_enabled(True, conn)
+        await self._set_enabled(True, conn)
 
     async def disable(self, conn: AsyncConnection):
         """
@@ -74,7 +114,7 @@ class Room(object):
 
         This preserves the room's settings in the bot.
         """
-        self._set_enabled(False, conn)
+        await self._set_enabled(False, conn)
 
 
 async def create_room(
@@ -89,11 +129,11 @@ async def create_room(
 
     res = await conn.execute(
         text("""
-        INSERT INTO room (discord_channel_id, enabled, inserted_at, updated_at)
-        VALUES (:id, :enabled, :now, :now)
+        INSERT INTO room (discord_guild_id, discord_channel_id, enabled, inserted_at, updated_at)
+        VALUES (:guild_id, :channel_id, :enabled, :now, :now)
         RETURNING id
         """),
-        {"id": channel.id, "enabled": enabled, "now": now.isoformat()},
+        {"guild_id": channel.guild.id, "channel_id": channel.id, "enabled": enabled, "now": now.isoformat()},
     )
 
     row = res.first()
@@ -102,6 +142,7 @@ async def create_room(
 
     room = Room(
         id=row.id,
+        discord_guild_id=channel.guild.id,
         channel=channel,
         enabled=enabled,
         inserted_at=now,
@@ -114,7 +155,7 @@ async def create_room(
 
 
 async def get_room(
-    channel: discord.TextChannel, conn: AsyncConnection
+    channel: discord.TextChannel | discord.Object, conn: AsyncConnection
 ) -> Optional[Room]:
     """
     Gets a room of a channel.
@@ -124,7 +165,7 @@ async def get_room(
 
     res = await conn.execute(
         text("""
-        SELECT id, enabled, players_required, inserted_at, updated_at
+        SELECT id, discord_guild_id, enabled, players_required, format_selection_mode, votes_required, inserted_at, updated_at
         FROM room
         WHERE discord_channel_id = :id
         """),
@@ -137,9 +178,12 @@ async def get_room(
 
     room = Room(
         id=row.id,
+        discord_guild_id=row.discord_guild_id,
         channel=channel,
         enabled=row.enabled,
         players_required=row.players_required,
+        format_selection_mode=FormatSelectMode(row.format_selection_mode),
+        votes_required=row.votes_required,
         inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
         updated_at=datetime.datetime.fromisoformat(row.updated_at),
     )

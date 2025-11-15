@@ -5,8 +5,8 @@ import logging
 import discord
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, List
-from gutbuster.room import Room
+from typing import Optional, List, Sequence
+from gutbuster.room import Room, EventFormat, get_room, FormatSelectMode
 from gutbuster.user import User, Rating
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -49,8 +49,29 @@ class Event(object):
     room: Room
     participants: Optional[List[Participant]] = field(default=None)
     status: EventStatus = field(default=EventStatus.LFG)
+    format: Optional[EventFormat] = field(default=None)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
+
+    async def preload_format(self, conn: AsyncConnection):
+        """
+        Preloads the format.
+        """
+
+        res = await conn.execute(
+            text("""
+            SELECT f.id, f.name
+            FROM event e, event_format f
+            WHERE
+                e.format_id = f.id
+                AND e.id = :id
+            """),
+            {"id": self.id}
+        )
+
+        row = res.first()
+        if row is not None:
+            self.format = EventFormat(row.id, name=row.name)
 
     async def preload_participants(self, conn: AsyncConnection):
         """
@@ -128,7 +149,7 @@ class Event(object):
         """
         Checks if a user is in this event.
 
-        Raises `ValueError` if the participants are not preloaded
+        Raises `ValueError` if the participants are not preloaded.
         """
 
         if self.participants is None:
@@ -158,6 +179,23 @@ class Event(object):
         )
 
         self.status = status
+
+    async def set_format(self, format: EventFormat, conn: AsyncConnection) -> None:
+        """
+        Sets the event format.
+        """
+
+        now = datetime.datetime.now()
+        await conn.execute(
+            text("""
+            UPDATE event
+            SET format_id = :format_id, updated_at = :now
+            WHERE id = :event_id
+            """),
+            {"event_id": self.id, "now": now.isoformat(), "format_id": format.id},
+        )
+
+        self.format = format
 
     async def join(self, user: User, conn: AsyncConnection) -> Participant:
         """
@@ -234,6 +272,15 @@ class Event(object):
             {"id": self.id},
         )
 
+        # Delete all participants
+        await conn.execute(
+            text("""
+            DELETE FROM participant
+            WHERE event_id = :event_id
+            """),
+            {"event_id": self.id},
+        )
+
 
 def _generate_id(length: int) -> str:
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
@@ -278,11 +325,121 @@ async def create_event(room: Room, conn: AsyncConnection) -> Event:
             logger.warning(e)
             pass
 
+    #await event.preload_participants(conn)
+    event.participants = []
+    return event
+
+async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[Event]:
+    """
+    Gets all joined, active events for a specific user.
+    """
+
+    res = await conn.execute(
+        text("""
+        SELECT
+            e.*,
+            r.discord_channel_id,
+            r.discord_guild_id,
+            r.enabled AS room_enabled,
+            r.players_required,
+            r.format_selection_mode,
+            r.votes_required,
+            r.inserted_at AS room_inserted_at,
+            r.updated_at AS room_updated_at,
+            f.name AS format_name
+        FROM
+            event e, room r, participant p
+        LEFT OUTER JOIN
+            event_format f
+        ON e.format_id = f.id
+        WHERE
+            e.room_id = r.id
+            AND p.event_id = e.id
+            AND p.user_id = :user_id
+            AND (e.status = 0 OR e.status = 1)
+        """),
+        {"user_id": user.id}
+    )
+
+    events = []
+    for row in res:
+        # Build the room
+        room = Room(
+            id=row.room_id,
+            discord_guild_id=row.discord_guild_id,
+            channel=discord.Object(row.discord_channel_id),
+            enabled=row.room_enabled,
+            players_required=row.players_required,
+            format_selection_mode=FormatSelectMode(row.format_selection_mode),
+            votes_required=row.votes_required,
+            inserted_at=datetime.datetime.fromisoformat(row.room_inserted_at),
+            updated_at=datetime.datetime.fromisoformat(row.room_updated_at),
+        )
+        await room.preload_formats(conn)
+
+        format = None
+        if row.format_id:
+            format = EventFormat(id=row.format_id, name=row.format_name)
+
+        # Load the event
+        event = Event(
+            id=row.id,
+            short_id=row.short_id,
+            room=room,
+            status=EventStatus(row.status),
+            format=format,
+            inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
+            updated_at=datetime.datetime.fromisoformat(row.updated_at),
+        )
+        events.append(event)
+
+    return events
+
+async def get_event(id: int, conn: AsyncConnection) -> Event:
+    """
+    Gets an existing event.
+
+    Raises an error if it doesn't exist.
+    """
+
+    res = await conn.execute(
+        text("""
+        SELECT e.id, e.short_id, e.status, e.inserted_at, e.updated_at, r.discord_channel_id
+        FROM event e, room r
+        WHERE
+            e.room_id = r.id
+            AND e.id = :id
+        """),
+        {"id": id},
+    )
+
+    row = res.first()
+    if row is None:
+        raise ValueError(f"event with id {id} does not exist")
+
+    inserted_at = datetime.datetime.fromisoformat(row.inserted_at)
+    updated_at = datetime.datetime.fromisoformat(row.updated_at)
+
+    # Fetch the parent room
+    room = await get_room(discord.Object(row.discord_channel_id), conn)
+    if room is None:
+        raise ValueError(f"parent room {row.discord_channel_id} does not exist")
+
+    event = Event(
+        id=row.id,
+        short_id=row.short_id,
+        room=room,
+        status=EventStatus(row.status),
+        inserted_at=inserted_at,
+        updated_at=updated_at,
+    )
+
+    await event.preload_format(conn)
     await event.preload_participants(conn)
     return event
 
 
-async def get_latest_active_event(room: Room, conn: AsyncConnection) -> Optional[Event]:
+async def get_active_event(room: Room, conn: AsyncConnection) -> Optional[Event]:
     """
     Gets the latest currently active event in a room.
     """
@@ -316,5 +473,6 @@ async def get_latest_active_event(room: Room, conn: AsyncConnection) -> Optional
         updated_at=updated_at,
     )
 
+    await event.preload_format(conn)
     await event.preload_participants(conn)
     return event

@@ -1,6 +1,8 @@
 -- Server list
 CREATE TABLE server (
-    
+    id INTEGER PRIMARY KEY,
+    remote VARCHAR(255) NOT NULL,
+    label VARCHAR(255) UNIQUE
 );
 
 -- We need to store some basic information about users
@@ -31,12 +33,19 @@ CREATE TABLE room (
     id INTEGER PRIMARY KEY,
     -- The discord ID of the channel.
     discord_channel_id BIGINT NOT NULL UNIQUE,
+    discord_guild_id BIGINT NOT NULL,
     -- If Mogis can be played in this room.
     -- There isn't any reason for this to be false, but it's useful for
     -- querying
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     -- How many players are required before the mogi can start.
     players_required INTEGER NOT NULL DEFAULT 8,
+    -- Whether formats should be selected randomly or voted.
+    -- 0 - VOTE
+    -- 1 - RANDOM
+    format_selection_mode INTEGER NOT NULL DEFAULT 0,
+    -- How many votes a format needs to be selected.
+    votes_required INTEGER NOT NULL DEFAULT 4,
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
@@ -52,7 +61,18 @@ CREATE TABLE event_format (
     -- 0 - FFA
     -- 1 - Half v Half
     -- 2 - Quarter v Quarter v Quarter v Quarter
-    team_mode INTEGER NOT NULL DEFAULT 0
+    team_mode INTEGER NOT NULL DEFAULT 0,
+
+    UNIQUE (room_id, name)
+);
+
+-- Each format wants >0 servers.
+CREATE TABLE event_format_server (
+    id INTEGER PRIMARY KEY,
+    event_format_id INTEGER NOT NULL REFERENCES event_format(id),
+    server_id INTEGER NOT NULL REFERENCES server(id),
+
+    UNIQUE (event_format_id, server_id)
 );
 
 -- Each room can only have one active mogi and many (>0) inactive mogis.
@@ -69,7 +89,7 @@ CREATE TABLE event (
     -- The format for the mogi.
     -- May be NULL if the mogi's format hasn't been formatted or randomly
     -- selected.
-    format INTEGER REFERENCES event_format(id),
+    format_id INTEGER REFERENCES event_format(id),
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
@@ -90,7 +110,9 @@ CREATE TABLE participant (
     -- them and is purely for documentation purposes.
     score INTEGER,
     inserted_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL
+    updated_at TIMESTAMP NOT NULL,
+
+    UNIQUE (user_id, event_id)
 );
 
 -- Finally, player modifications.

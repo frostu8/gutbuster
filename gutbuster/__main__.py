@@ -1,11 +1,11 @@
 from gutbuster.app import App
 from gutbuster.user import get_or_create_user, get_user, User
-from gutbuster.room import get_room, EventFormat
-from gutbuster.event import get_latest_active_event, create_event, EventStatus, Event
+from gutbuster.room import get_room, create_room, EventFormat
+from gutbuster.event import get_active_event, create_event, EventStatus, Event, get_event, get_active_events_for
 from gutbuster.config import load as load_config
 
 from dotenv import load_dotenv
-from typing import List, Callable, Awaitable, Any, Optional
+from typing import List, Callable, Awaitable, Any, Optional, Dict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 import discord
@@ -39,9 +39,10 @@ class VoteEntry(ui.Section):
     votes: List[User]
 
     anonymized: bool
-    _disabled: bool
     quality: float
     votes_needed: int
+
+    _disabled: bool
 
     def __init__(
         self,
@@ -213,9 +214,17 @@ class VoteView(ui.LayoutView):
         for format in self.formats:
             format.disabled = True
             format.anonymized = False
+            format.regenerate_label()
 
         if not self.is_finished():
             self.stop()
+
+        # Commit the format selection
+        async with app.db.connect() as conn:
+            # In case the event was updated while we were waiting for voting
+            self.event = await get_event(self.event.id, conn)
+            await self.event.set_format(self.selected_format, conn)
+            await conn.commit()
 
         # Update the message
         if self.message is not None:
@@ -275,6 +284,11 @@ async def start_event(event: Event, conn: AsyncConnection) -> None:
 
     # Notify players in the channel
     channel = event.room.channel
+    if isinstance(channel, discord.Object):
+        channel = app.get_channel(channel.id)
+
+    if channel is None or not isinstance(channel, discord.TextChannel):
+        raise ValueError("Failed to get room channel")
 
     # Preload all users
     for participant in event.get_participants():
@@ -285,14 +299,65 @@ async def start_event(event: Event, conn: AsyncConnection) -> None:
     if len(config.messages.gathered) > 0:
         random_message = random.choice(config.messages.gathered)
 
-    view = VoteView(event, flavor=random_message, timeout=30, votes_needed=4)
+    view = VoteView(event, flavor=random_message, timeout=120, votes_needed=event.room.votes_required)
     view.message = await channel.send(
         allowed_mentions=view.allowed_mentions(), view=view
     )
 
+    # Uncan all participants from other mogis
+    uncanned: Dict[int, List[User]] = {}
+    for p in event.get_participants():
+        canned_events = await get_active_events_for(p.user, conn)
+
+        for canned in canned_events:
+            # Don't uncan from our own event
+            if canned.id == event.id:
+                continue
+            # This probably shouldn't happen, but check if the event is still
+            # LFG
+            if not canned.status == EventStatus.LFG:
+                continue
+
+            # Unregister from event
+            await canned.leave(p.user, conn)
+
+            if canned.room.channel.id not in uncanned.keys():
+                uncanned[canned.room.channel.id] = []
+            uncanned[canned.room.channel.id].append(p.user)
+
+    # Notify channels of mass uncanning
+    for k, v in uncanned.items():
+        other_channel = app.get_channel(k)
+        if other_channel is None:
+            # Silently avoid notifying non-existent channel
+            continue
+        if not isinstance(other_channel, discord.TextChannel):
+            raise ValueError("mogi started in non-guild channel")
+
+        content = ""
+        for i, user in enumerate(v):
+            # Get user
+            discord_user = await user.fetch_user(app)
+
+            if i == 0:
+                content += discord_user.mention
+            elif i < len(v) - 1:
+                content += f", {discord_user.mention}"
+            else:
+                content += f" and {discord_user.mention}"
+
+        # Humanize
+        if len(v) == 1:
+            content += " has "
+        else:
+            content += " have "
+
+        content += f"been removed from the mogi because another mogi in {channel.mention} has gathered."
+        await other_channel.send(content, allowed_mentions=AllowedMentions.none())
+
 
 @app.tree.command(name="c", description="Queue into the mogi")
-async def command_c(interaction: discord.Interaction):
+async def command_can(interaction: discord.Interaction):
     """
     The /c command.
 
@@ -317,14 +382,23 @@ async def command_c(interaction: discord.Interaction):
         room = await get_room(interaction.channel, conn)
         if room is None or not room.enabled:
             await interaction.response.send_message(
-                "This channel isn't set up for mogis! Try /c'ing somewhere else.",
+                "This channel isn't set up for mogis!\nTry /c'ing somewhere else.",
+                ephemeral=True,
+            )
+            return
+
+        # We can't host a Mogi here if there are no formats!
+        if len(room.formats) == 0:
+            await interaction.response.send_message(
+                "This channel has no formats to run mogis on! (This may be a misconfiguraton, try asking)\nTry /c'ing somewhere else.",
                 ephemeral=True,
             )
             return
 
         # Get the currently active event
-        event = await get_latest_active_event(room, conn)
+        event = await get_active_event(room, conn)
         if event is None:
+            # Users can create mogis by simply canning in a channel.
             event = await create_event(room, conn)
 
         if event.has(user):
@@ -351,7 +425,7 @@ async def command_c(interaction: discord.Interaction):
 
 
 @app.tree.command(name="d", description="Drop from the mogi")
-async def command_d(interaction: discord.Interaction):
+async def command_drop(interaction: discord.Interaction):
     """
     The /d command.
 
@@ -376,13 +450,13 @@ async def command_d(interaction: discord.Interaction):
         room = await get_room(interaction.channel, conn)
         if room is None or not room.enabled:
             await interaction.response.send_message(
-                "This channel isn't set up for mogis! Try /c'ing somewhere else.",
+                "This channel isn't set up for mogis!",
                 ephemeral=True,
             )
             return
 
         # Get the currently active event
-        event = await get_latest_active_event(room, conn)
+        event = await get_active_event(room, conn)
         if event is None or not event.has(user):
             await interaction.response.send_message(
                 f"{name}, you're not in the queue.\nUse </c:{command_c.id}> to enter the queue.",
@@ -402,8 +476,54 @@ async def command_d(interaction: discord.Interaction):
         await conn.commit()
 
 
+@app.tree.command(name="da", description="Drop from all joined mogis")
+async def command_drop_all(interaction: discord.Interaction):
+    """
+    The /da command.
+
+    Allows users to drop from all queues they have joined.
+    """
+
+    if interaction.channel is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
+    name = getattr(interaction.user, "nick", None) or interaction.user.global_name
+
+    commands = await app.tree.fetch_commands()
+    command_c = next(c for c in commands if c.name == "c")
+
+    async with app.db.connect() as conn:
+        # Fetch the user from the database
+        user = await get_or_create_user(interaction.user, conn)
+        await conn.commit()
+
+        events = await get_active_events_for(user, conn)
+        for event in events:
+            # Leave the event
+            await event.leave(user, conn)
+
+            channel = event.room.channel
+            if isinstance(channel, discord.Object):
+                channel = app.get_channel(channel.id)
+
+            if channel is None or not isinstance(channel, discord.TextChannel):
+                raise ValueError("Failed to get room channel")
+
+            player_count = len(event.get_participants())
+            await channel.send(
+                f"{name} has dropped from the mogi -- {player_count} players\nUse </c:{command_c.id}> to enter the queue.",
+            )
+
+        await conn.commit()
+        await interaction.response.send_message(
+            f"You have been dropped from {len(events)} mogis.",
+            ephemeral=True
+        )
+
+
 @app.tree.command(name="l", description="Lists all players in the mogi")
-async def command_l(interaction: discord.Interaction):
+async def command_list(interaction: discord.Interaction):
     """
     The /l command.
 
@@ -419,30 +539,34 @@ async def command_l(interaction: discord.Interaction):
         room = await get_room(interaction.channel, conn)
         if room is None or not room.enabled:
             await interaction.response.send_message(
-                "This channel isn't set up for mogis! Try /c'ing somewhere else.",
+                "This channel isn't set up for mogis!",
                 ephemeral=True,
             )
             return
 
         # Get the currently active event
-        event = await get_latest_active_event(room, conn)
-        participants = []
-        if event is not None:
-            participants = event.get_participants()
+        event = await get_active_event(room, conn)
+        if event is None:
+            interaction.response.send_message(
+                "Nobody's in here! Why not get it started?",
+            )
+            return
+        
+        participants = event.get_participants()
 
         # Build the mogi list
         message = "**Mogi List**"
         for i, participant in enumerate(participants):
             res = await conn.execute(
                 text("SELECT name, discord_user_id FROM user WHERE id = :user_id"),
-                {"user_id": participant.user_id},
+                {"user_id": participant.user.id},
             )
 
             row = res.first()
             if row is None:
-                raise ValueError(f"failed to get existing user {participant.user_id}")
+                raise ValueError(f"failed to get existing user {participant.user.id}")
 
-            discord_user = participant.user.fetch_user(app)
+            discord_user = await participant.user.fetch_user(app)
             message += f"\n`{i + 1}.` {discord_user.mention}"
 
         await interaction.response.send_message(
@@ -450,9 +574,70 @@ async def command_l(interaction: discord.Interaction):
         )
 
 
-@app.tree.command(
-    name="clear", description="Forcibly ends the current mogi and starts a new one"
-)
+async def _command_end(interaction: discord.Interaction):
+    """
+    The /end command.
+
+    Ends the current mogi. To end a mogi, two conditions must be met:
+    - The mogi has started.
+    - The mogi has had a format selected.
+    """
+
+    if interaction.channel is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
+    commands = await app.tree.fetch_commands()
+    command_c = next(c for c in commands if c.name == "c")
+
+    async with app.db.connect() as conn:
+        # Find the room
+        room = await get_room(interaction.channel, conn)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel isn't set up for mogis!",
+                ephemeral=True,
+            )
+            return
+
+        # Get the currently active event
+        event = await get_active_event(room, conn)
+        if event is None or event.status == EventStatus.LFG:
+            await interaction.response.send_message(
+                "A mogi hasn't started yet!",
+                ephemeral=True,
+            )
+            return
+
+        # Check if the mogi has "started," but the format hasn't been
+        # determined.
+        if event.status == EventStatus.STARTED and event.format is None:
+            await interaction.response.send_message(
+                "A vote is being held to determine the format.",
+                ephemeral=True,
+            )
+            return
+
+        # Close the mogi
+        await event.set_status(EventStatus.ENDED, conn)
+        await conn.commit()
+
+        await interaction.response.send_message(
+            f"Mogi `{event.short_id}` has ended.\nStart a new one with </c:{command_c.id}>!",
+        )
+
+
+@app.tree.command(name="end", description="Ends the current mogi")
+async def command_end(interaction: discord.Interaction):
+    await _command_end(interaction)
+
+
+@app.tree.command(name="esn", description="Ends the current mogi")
+async def command_esn(interaction: discord.Interaction):
+    await _command_end(interaction)
+
+
+@app.tree.command(name="clear", description="Forgets the current mogi")
 @default_permissions(None)
 async def command_clear(interaction: discord.Interaction):
     """
@@ -477,13 +662,78 @@ async def command_clear(interaction: discord.Interaction):
             return
 
         # Get the currently active event
-        event = await get_latest_active_event(room, conn)
+        event = await get_active_event(room, conn)
         if event is not None:
             await event.delete(conn)
 
         await interaction.response.send_message(
             "The mogi queue has been cleared.",
         )
+
+        await conn.commit()
+
+@app.tree.command(
+    name="enable", description="Enables the channel to run mogis"
+)
+@default_permissions(None)
+async def command_enable(interaction: discord.Interaction):
+    """
+    The /enable command.
+
+    Enables Mogis to take place in a channel.
+    """
+
+    if interaction.channel is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
+    async with app.db.connect() as conn:
+        # Find the room
+        room = await get_room(interaction.channel, conn)
+        if room is None:
+            # The admin wants to enable this channel!
+            # Make the room, and then make a default FFA format.
+            room = await create_room(interaction.channel, conn)
+            await room.add_format("FFA", conn)
+
+            await interaction.response.send_message(
+                f"Channel {interaction.channel.mention} has been enabled and initialized to run mogis.\nFormat `FFA` automatically added.",
+            )
+        else:
+            if not room.enabled:
+                await room.enable(conn)
+
+            await interaction.response.send_message(
+                f"Channel {interaction.channel.mention} has been enabled.",
+            )
+
+        await conn.commit()
+
+@app.tree.command(name="disable", description="Disables the channel")
+@default_permissions(None)
+async def command_disable(interaction: discord.Interaction):
+    """
+    The /disable command.
+
+    Disables the channel's ability to run Mogis.
+    """
+
+    if interaction.channel is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
+    async with app.db.connect() as conn:
+        # Find the room
+        room = await get_room(interaction.channel, conn)
+        if room is not None and room.enabled:
+            # Disable the room
+            await room.disable(conn)
+
+        await interaction.response.send_message(
+            f"Channel {interaction.channel.mention} has been disabled.",
+        )
+
+        await conn.commit()
 
 
 # Fetch our token
