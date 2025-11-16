@@ -9,7 +9,7 @@ from typing import List, Callable, Awaitable, Any, Optional, Dict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 import discord
-from discord import AllowedMentions, ButtonStyle, ui
+from discord import AllowedMentions, ButtonStyle, ui, app_commands
 from discord.app_commands import default_permissions
 import datetime
 import math
@@ -734,6 +734,30 @@ async def command_disable(interaction: discord.Interaction):
         )
 
         await conn.commit()
+
+
+command_servers = app_commands.Group(name="servers", description="Ring Racers server management commands")
+
+
+@command_servers.command(name="add", description="Adds a server to Gutbuster")
+@app_commands.describe(ip="The ip of the server")
+@app_commands.describe(label="A user-friendly name to describe the server")
+async def command_servers_add(interaction: discord.Interaction, ip: str, label: Optional[str]):
+    pass
+
+
+@command_servers.command(name="remove", description="Removes a server from Gutbuster")
+@app_commands.describe(ip_or_label="The ip of the server, or the server's label")
+async def command_servers_remove(interaction: discord.Interaction, ip_or_label: str):
+    pass
+
+
+@command_servers.command(name="list", description="Lists all servers Gutbuster has registered")
+async def command_servers_list(interaction: discord.Interaction):
+    pass
+
+
+app.tree.add_command(command_servers)
 
 
 # Fetch our token
