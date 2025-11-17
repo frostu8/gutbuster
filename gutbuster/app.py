@@ -2,6 +2,7 @@ import discord
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from discord import app_commands
+from gutbuster.servers import ServerWatcher
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,9 @@ class App(discord.Client):
 
     user: discord.ClientUser
     tree: app_commands.CommandTree
+
     db: AsyncEngine
+    watcher: ServerWatcher
 
     def __init__(self, *, intents: discord.Intents):
         super().__init__(intents=intents)
@@ -27,10 +30,9 @@ class App(discord.Client):
     async def setup_hook(self):
         # Connects to a database.
         self.db = create_async_engine("sqlite+aiosqlite:///dev_gutbuster.sqlite")
+        self.watcher = ServerWatcher(db=self.db)
 
-        # Registers some views and components with the discord.py client. For
-        # now this is unpopulated.
-        pass
+        await self.watcher.load()
 
     async def on_ready(self):
         logger.info(f'Logged in as {self.user}')

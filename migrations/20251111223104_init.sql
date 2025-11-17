@@ -1,8 +1,11 @@
 -- Server list
 CREATE TABLE server (
     id INTEGER PRIMARY KEY,
+    discord_guild_id BIGINT NOT NULL UNIQUE,
     remote VARCHAR(255) NOT NULL,
-    label VARCHAR(255) UNIQUE
+    label VARCHAR(255) UNIQUE,
+    inserted_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
 );
 
 -- We need to store some basic information about users

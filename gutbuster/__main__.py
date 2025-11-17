@@ -3,6 +3,7 @@ from gutbuster.user import get_or_create_user, get_user, User
 from gutbuster.room import get_room, create_room, EventFormat
 from gutbuster.event import get_active_event, create_event, EventStatus, Event, get_event, get_active_events_for
 from gutbuster.config import load as load_config
+from gutbuster.servers import Server, PacketError
 
 from dotenv import load_dotenv
 from typing import List, Callable, Awaitable, Any, Optional, Dict
@@ -28,6 +29,67 @@ config = load_config("config.toml")
 
 intents = discord.Intents.default()
 app = App(intents=intents)
+
+
+class ServerContainer(ui.Container):
+    server: Server
+
+    header: ui.TextDisplay
+
+    separator: Optional[ui.Separator]
+    info: Optional[ui.TextDisplay]
+
+    #join_button: ui.Button
+
+    def __init__(self, server: Server):
+        children = []
+
+        self.server = server
+
+        join_url = f"ringracers://{self.server.remote}:{self.server.remote_port}" # TODO
+        self.join_button = ui.Button(style=ButtonStyle.secondary, label="Get in here!", url=join_url)
+
+        if self.server.info is None:
+            content = "🔴 Server is offline."
+            self.header = ui.TextDisplay(content)
+
+            children.append(self.header)
+
+            self.separator = None
+            self.info = None
+            self.join_button.disabled = True
+        else:
+            # Generate content
+            content = (
+                "🟢 "
+                f"**IP** `{server.remote}:{server.remote_port}`\n"
+                f"**Server Name** {server.server_name}"
+            )
+            self.header = ui.TextDisplay(content)
+            self.separator = ui.Separator()
+
+            children.append(self.header)
+            children.append(self.separator)
+
+            # Generate additional info
+            content = (
+                f"**Game Speed** {self.server.info.game_speed}\n"
+                f"**Map Name** {self.server.map_title}\n"
+            )
+            self.info = ui.TextDisplay(content)
+
+            children.append(self.info)
+
+        super().__init__(*children)
+
+
+class ServerView(ui.LayoutView):
+    container: ServerContainer
+
+    def __init__(self, server: Server, **kwargs):
+        super().__init__(**kwargs)
+        self.container = ServerContainer(server)
+        self.add_item(self.container)
 
 
 class VoteEntry(ui.Section):
@@ -299,7 +361,7 @@ async def start_event(event: Event, conn: AsyncConnection) -> None:
     if len(config.messages.gathered) > 0:
         random_message = random.choice(config.messages.gathered)
 
-    view = VoteView(event, flavor=random_message, timeout=120, votes_needed=event.room.votes_required)
+    view = VoteView(event, flavor=random_message, aptimeout=120, votes_needed=event.room.votes_required)
     view.message = await channel.send(
         allowed_mentions=view.allowed_mentions(), view=view
     )
@@ -743,7 +805,26 @@ command_servers = app_commands.Group(name="servers", description="Ring Racers se
 @app_commands.describe(ip="The ip of the server")
 @app_commands.describe(label="A user-friendly name to describe the server")
 async def command_servers_add(interaction: discord.Interaction, ip: str, label: Optional[str]):
-    pass
+    """
+    The /servers add command.
+    """
+
+    if interaction.guild is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
+    server = await app.watcher.add(interaction.guild, remote=ip, label=label)
+
+    # Ack the command, because knocking may take a while
+    await interaction.response.defer(thinking=True)
+
+    # Knock
+    try:
+        await server.knock()
+    except PacketError as _e:
+        pass
+
+    await interaction.followup.send(view=ServerView(server, timeout=0))
 
 
 @command_servers.command(name="remove", description="Removes a server from Gutbuster")

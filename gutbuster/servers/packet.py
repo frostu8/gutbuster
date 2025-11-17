@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass 
 from enum import Enum, Flag
 from typing import Optional, Dict, Self, Type, Any
 from abc import ABC, abstractmethod
@@ -121,23 +121,6 @@ class ServerInfo:
     # Addons
     number_of_files: int
     http_source: str
-
-    _server_name_plaintext: Optional[str] = field(default=None)
-
-    @property
-    def server_name_plaintext(self):
-        """
-        The server name in plaintext.
-
-        Strips color control codes.
-        """
-
-        if self._server_name_plaintext is not None:
-            return self._server_name_plaintext
-
-        name = strip_colors(self.server_name)
-        self._server_name_plaintext = name
-        return name
 
 
 # Taken from src/d_net.cpp, L:714
