@@ -3,7 +3,7 @@ from .packet import ServerInfo
 from typing import List, Dict, Optional, Generator
 from datetime import datetime
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncConnection
 import discord
 
 
@@ -34,9 +34,26 @@ class WatchedServer(Server):
 
         self.last_updated = None
 
+    async def update_label(self, label: str, conn: AsyncConnection) -> None:
+        """
+        Updates the server label.
+        """
+
+        self.label = label
+
+        now = datetime.now()
+        await conn.execute(
+            text("""
+            UPDATE server
+            SET label = :label, updated_at = :now
+            WHERE id = :id
+            """),
+            {"id": self.id, "label": label, "now": now.isoformat()}
+        )
+
     async def knock(self) -> ServerInfo:
         info = await super().knock()
-        last_updated = datetime.now()
+        self.last_updated = datetime.now()
         return info
 
 
@@ -105,6 +122,8 @@ class ServerWatcher:
             if row is None:
                 raise ValueError("Failed to get generated id of row")
 
+            await conn.commit()
+
         server = WatchedServer(
             id=row.id,
             discord_guild_id=guild.id,
@@ -156,7 +175,7 @@ class ServerWatcher:
         async with self.db.connect() as conn:
             res = await conn.execute(
                 text("""
-                SELECT id, remote, label, inserted_at, updated_at
+                SELECT id, discord_guild_id, remote, label, inserted_at, updated_at
                 FROM server
                 """)
             )

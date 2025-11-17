@@ -1,3 +1,7 @@
+[color]
+server_online = "#42ed53"
+server_offline = "#d6240d"
+
 [messages]
 gathered = [
   "A dark, forboding feeling overtakes you. You know this Mogi's conclusion, even in its infancy.",

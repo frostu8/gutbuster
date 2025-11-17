@@ -6,6 +6,15 @@ import ipaddress
 from datetime import datetime
 
 
+class ConnectError(Exception):
+    """
+    An error for connection failures.
+    """
+
+    def __init__(self, *args):
+        super().__init__(*args)
+
+
 class Server:
     """
     A Ring Racers server.
@@ -102,4 +111,4 @@ class Server:
 
             tries = tries + 1
 
-        raise ValueError(f"Failed to get server info after {tries} tries")
+        raise ConnectError(f"Failed to get server info after {tries} tries")

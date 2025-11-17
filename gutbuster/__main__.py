@@ -3,7 +3,7 @@ from gutbuster.user import get_or_create_user, get_user, User
 from gutbuster.room import get_room, create_room, EventFormat
 from gutbuster.event import get_active_event, create_event, EventStatus, Event, get_event, get_active_events_for
 from gutbuster.config import load as load_config
-from gutbuster.servers import Server, PacketError
+from gutbuster.servers import Server, PacketError, ConnectError, GameSpeed
 
 from dotenv import load_dotenv
 from typing import List, Callable, Awaitable, Any, Optional, Dict
@@ -39,15 +39,15 @@ class ServerContainer(ui.Container):
     separator: Optional[ui.Separator]
     info: Optional[ui.TextDisplay]
 
-    #join_button: ui.Button
+    action_row: ui.ActionRow
 
     def __init__(self, server: Server):
         children = []
 
         self.server = server
 
-        join_url = f"ringracers://{self.server.remote}:{self.server.remote_port}" # TODO
-        self.join_button = ui.Button(style=ButtonStyle.secondary, label="Get in here!", url=join_url)
+        # TODO: Figure out a workaround for Discord having "security"
+        _join_url = f"ringracers://{self.server.remote}:{self.server.remote_port}"
 
         if self.server.info is None:
             content = "🔴 Server is offline."
@@ -57,13 +57,15 @@ class ServerContainer(ui.Container):
 
             self.separator = None
             self.info = None
-            self.join_button.disabled = True
         else:
             # Generate content
-            content = (
-                "🟢 "
-                f"**IP** `{server.remote}:{server.remote_port}`\n"
-                f"**Server Name** {server.server_name}"
+            content = ""
+            if server.label is not None:
+                content += f"## {server.label}\n"
+
+            content += (
+                f"🟢 **IP** `{server.remote}:{server.remote_port}`\n"
+                f"{server.server_name}"
             )
             self.header = ui.TextDisplay(content)
             self.separator = ui.Separator()
@@ -72,24 +74,44 @@ class ServerContainer(ui.Container):
             children.append(self.separator)
 
             # Generate additional info
+            game_speed = "2 Fast"
+            match self.server.info.game_speed:
+                case GameSpeed.EASY:
+                    game_speed = "Gear 1"
+                case GameSpeed.NORMAL:
+                    game_speed = "Gear 2"
+                case GameSpeed.HARD:
+                    game_speed = "Gear 3"
+                case _:
+                    pass
+
             content = (
-                f"**Game Speed** {self.server.info.game_speed}\n"
-                f"**Map Name** {self.server.map_title}\n"
+                f"**Game Speed**\n{game_speed}\n\n"
+                f"**Map Name**\n{self.server.map_title}\n\n"
             )
             self.info = ui.TextDisplay(content)
 
             children.append(self.info)
 
-        super().__init__(*children)
+        if self.server.info is None:
+            color = config.colors.server_offline
+        else:
+            color = config.colors.server_online
+
+        super().__init__(*children, accent_color=color)
 
 
-class ServerView(ui.LayoutView):
-    container: ServerContainer
+class ServersView(ui.LayoutView):
+    containers: List[ServerContainer]
 
-    def __init__(self, server: Server, **kwargs):
-        super().__init__(**kwargs)
-        self.container = ServerContainer(server)
-        self.add_item(self.container)
+    def __init__(self, *servers: Server, timeout: Optional[int | float]):
+        super().__init__(timeout=timeout)
+
+        self.containers = []
+        for server in servers:
+            container = ServerContainer(server)
+            self.containers.append(container)
+            self.add_item(container)
 
 
 class VoteEntry(ui.Section):
@@ -361,7 +383,7 @@ async def start_event(event: Event, conn: AsyncConnection) -> None:
     if len(config.messages.gathered) > 0:
         random_message = random.choice(config.messages.gathered)
 
-    view = VoteView(event, flavor=random_message, aptimeout=120, votes_needed=event.room.votes_required)
+    view = VoteView(event, flavor=random_message, timeout=120, votes_needed=event.room.votes_required)
     view.message = await channel.send(
         allowed_mentions=view.allowed_mentions(), view=view
     )
@@ -821,10 +843,20 @@ async def command_servers_add(interaction: discord.Interaction, ip: str, label: 
     # Knock
     try:
         await server.knock()
-    except PacketError as _e:
+    except PacketError:
+        # Do nothing on packet errors
+        pass
+    except ConnectError:
+        # Do nothing on connect errors
         pass
 
-    await interaction.followup.send(view=ServerView(server, timeout=0))
+    # Update label if the user passed no label
+    if server.info is not None:
+        async with app.db.connect() as conn:
+            await server.update_label(server.info.server_name, conn)
+            await conn.commit()
+
+    await interaction.followup.send(view=ServersView(server, timeout=0))
 
 
 @command_servers.command(name="remove", description="Removes a server from Gutbuster")
@@ -835,7 +867,34 @@ async def command_servers_remove(interaction: discord.Interaction, ip_or_label: 
 
 @command_servers.command(name="list", description="Lists all servers Gutbuster has registered")
 async def command_servers_list(interaction: discord.Interaction):
-    pass
+    """
+    The /servers list command.
+    """
+
+    if interaction.guild is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
+    commands = await app.tree.fetch_commands()
+    command_servers = next(c for c in commands if c.name == "servers")
+
+    # Ack the command, because knocking may take a while
+    await interaction.response.defer(thinking=True)
+
+    servers = []
+
+    for server in app.watcher.iter(interaction.guild):
+        # Freshly update all latest servers
+        await server.knock()
+        servers.append(server)
+
+    if len(servers) > 0:
+        await interaction.followup.send(view=ServersView(*servers, timeout=0))
+    else:
+        await interaction.followup.send(
+            "No servers added!\n"
+            f"Get this party started by adding a server w/ </servers add:{command_servers.id}>"
+        )
 
 
 app.tree.add_command(command_servers)

@@ -1,5 +1,5 @@
-from .server import Server
-from .packet import ServerInfo, PacketError, Packet
+from .server import Server, ConnectError
+from .packet import ServerInfo, PacketError, Packet, ServerFlags, RefuseReason, GameSpeed
 from .watcher import ServerWatcher, WatchedServer
 
 __all__ = [
@@ -9,4 +9,8 @@ __all__ = [
     "WatchedServer",
     "Packet",
     "PacketError",
+    "ConnectError",
+    "GameSpeed",
+    "RefuseReason",
+    "ServerFlags",
 ]

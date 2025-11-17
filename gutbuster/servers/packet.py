@@ -50,9 +50,9 @@ class GameSpeed(Enum):
     Server gamespeeds.
     """
 
-    EASY = 1  # Gear 1
-    NORMAL = 2  # Gear 2
-    HARD = 3  # Gear 3
+    EASY = 0  # Gear 1
+    NORMAL = 1  # Gear 2
+    HARD = 2  # Gear 3
 
 
 class PacketType(Enum):
