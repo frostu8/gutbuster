@@ -129,7 +129,8 @@ class Server:
         while tries < self.tries:
             start_time = datetime.now()
             if timeout_at <= start_time:
-                break
+                tries += 1
+                continue
             timeout = (timeout_at - start_time).total_seconds()
 
             # Wait for remote's response.
