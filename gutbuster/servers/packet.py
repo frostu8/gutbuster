@@ -1,12 +1,13 @@
-from dataclasses import dataclass 
+from dataclasses import dataclass
 from enum import Enum, Flag
-from typing import Optional, Dict, Self, Type, Any
+from typing import Optional, Dict, Self, Type, Any, List, Tuple
 from abc import ABC, abstractmethod
 import struct
 from functools import reduce
 
 
 RINGRACERS_VERSION = 2
+MAX_PLAYERS = 16
 
 
 class PacketError(Exception):
@@ -78,7 +79,24 @@ class ServerFlags(Flag):
 
 
 def strip_colors(input: str) -> str:
-    codes = ["\\x80","\\x81","\\x82","\\x83","\\x84","\\x85","\\x86","\\x87","\\x88","\\x89","\\x8a","\\x8b","\\x8c","\\x8d","\\x8e","\\x8f",]
+    codes = [
+        "\\x80",
+        "\\x81",
+        "\\x82",
+        "\\x83",
+        "\\x84",
+        "\\x85",
+        "\\x86",
+        "\\x87",
+        "\\x88",
+        "\\x89",
+        "\\x8a",
+        "\\x8b",
+        "\\x8c",
+        "\\x8d",
+        "\\x8e",
+        "\\x8f",
+    ]
     for i in range(0x10):
         input = input.replace(codes[i], "")
     return input
@@ -123,6 +141,30 @@ class ServerInfo:
     http_source: str
 
 
+@dataclass(kw_only=True)
+class PlayerInfo:
+    """
+    Ring Racers player info.
+    """
+
+    num: int
+    name: str
+    # Lets not. Ring Racers does not populate this (for good reason)
+    # address: List[int]
+    team: int
+    score: int
+    time_in_server: int
+
+    # Skin is deprecated, always 0xff
+    # skin: int
+    # Supposed to be color, but also deprecated, always 0x0
+    # data: int
+
+    @property
+    def is_empty(self) -> bool:
+        return self.num == 255
+
+
 # Taken from src/d_net.cpp, L:714
 def net_checksum(packet: bytes, offset: int = 4) -> int:
     """
@@ -136,7 +178,7 @@ def net_checksum(packet: bytes, offset: int = 4) -> int:
     return checksum
 
 
-def _unpack(format: str, packet: bytes) -> Dict[str, Any]:
+def _unpack(format: str, packet: bytes) -> Tuple[Dict[str, Any], bytes]:
     n = 0
     format_array = format.split("/")
     output = {}
@@ -159,7 +201,7 @@ def _unpack(format: str, packet: bytes) -> Dict[str, Any]:
             output[data_format_name] = data[0]
 
         n += struct.calcsize(unpack_param)
-    return output
+    return output, packet[n:]
 
 
 def cstrlen(s: bytes, offset: int = 0, n: Optional[int] = None) -> int:
@@ -365,7 +407,7 @@ class ServerInfoPacket(Packet):
 
     @classmethod
     def unpack_inner(cls, packet: bytes) -> Packet:
-        unpacked = _unpack(cls._packet, packet)
+        unpacked, _ = _unpack(cls._packet, packet)
 
         # Build server info struct
         # Calculate commit hash
@@ -415,3 +457,45 @@ class ServerInfoPacket(Packet):
         )
 
         return ServerInfoPacket(info)
+
+
+@packet
+class PlayerInfoPacket(Packet):
+    """
+    Ring Racers player info packet.
+    """
+
+    _packet_type = PacketType.PLAYERINFO
+    _packet: str = "Bnum/22sname/4saddress/Bteam/Bskin/Bdata/Iscore/Htimeinserver"
+
+    players: List[PlayerInfo]
+
+    def __init__(self, *players: PlayerInfo):
+        self.players = list(players)
+
+    @classmethod
+    def packet_type(self) -> PacketType:
+        return self._packet_type
+
+    def pack_inner(self) -> bytes:
+        raise NotImplementedError()
+
+    @classmethod
+    def unpack_inner(cls, packet: bytes) -> Packet:
+        players = []
+
+        for i in range(MAX_PLAYERS):
+            unpacked, packet = _unpack(cls._packet, packet)
+
+            # Do strings
+            name = cstr(unpacked["name"])
+
+            players.append(PlayerInfo(
+                num=unpacked["num"],
+                name=name,
+                team=unpacked["team"],
+                score=unpacked["score"],
+                time_in_server=unpacked["timeinserver"]
+            ))
+
+        return PlayerInfoPacket(*players)

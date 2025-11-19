@@ -1,17 +1,26 @@
 from gutbuster.app import App
 from gutbuster.user import get_or_create_user, get_user, User
 from gutbuster.room import get_room, create_room, EventFormat
-from gutbuster.event import get_active_event, create_event, EventStatus, Event, get_event, get_active_events_for
+from gutbuster.event import (
+    get_active_event,
+    create_event,
+    EventStatus,
+    Event,
+    get_event,
+    get_active_events_for,
+)
 from gutbuster.config import load as load_config
 from gutbuster.servers import Server, PacketError, ConnectError, GameSpeed
 
 from dotenv import load_dotenv
 from typing import List, Callable, Awaitable, Any, Optional, Dict
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 import discord
 from discord import AllowedMentions, ButtonStyle, ui, app_commands
 from discord.app_commands import default_permissions
+from copy import copy
 import datetime
 import math
 import random
@@ -36,7 +45,6 @@ class ServerContainer(ui.Container):
 
     header: ui.TextDisplay
 
-    separator: Optional[ui.Separator]
     info: Optional[ui.TextDisplay]
 
     action_row: ui.ActionRow
@@ -63,15 +71,11 @@ class ServerContainer(ui.Container):
             if server.label is not None:
                 content += f"## {server.label}\n"
 
-            content += (
-                f"🟢 **IP** `{server.remote}:{server.remote_port}`\n"
-                f"{server.server_name}"
-            )
+            content += f"🟢 **IP** `{server.remote}:{server.remote_port}`"
             self.header = ui.TextDisplay(content)
-            self.separator = ui.Separator()
 
             children.append(self.header)
-            children.append(self.separator)
+            children.append(ui.Separator())
 
             # Generate additional info
             game_speed = "2 Fast"
@@ -86,9 +90,18 @@ class ServerContainer(ui.Container):
                     pass
 
             content = (
-                f"**Game Speed**\n{game_speed}\n\n"
-                f"**Map Name**\n{self.server.map_title}\n\n"
+                f"**Map Name** {self.server.map_title}\n**Game Speed** {game_speed}"
             )
+
+            if len(server.players) > 0:
+                content += "\n\n**Players**"
+
+                # List all players
+                players = copy(server.players)
+                players.sort(key=lambda a: a.score, reverse=True)
+                for player in server.players:
+                    content += f"\n`{player.score:04}` {player.name}"
+
             self.info = ui.TextDisplay(content)
 
             children.append(self.info)
@@ -383,7 +396,12 @@ async def start_event(event: Event, conn: AsyncConnection) -> None:
     if len(config.messages.gathered) > 0:
         random_message = random.choice(config.messages.gathered)
 
-    view = VoteView(event, flavor=random_message, timeout=120, votes_needed=event.room.votes_required)
+    view = VoteView(
+        event,
+        flavor=random_message,
+        timeout=120,
+        votes_needed=event.room.votes_required,
+    )
     view.message = await channel.send(
         allowed_mentions=view.allowed_mentions(), view=view
     )
@@ -601,8 +619,7 @@ async def command_drop_all(interaction: discord.Interaction):
 
         await conn.commit()
         await interaction.response.send_message(
-            f"You have been dropped from {len(events)} mogis.",
-            ephemeral=True
+            f"You have been dropped from {len(events)} mogis.", ephemeral=True
         )
 
 
@@ -635,7 +652,7 @@ async def command_list(interaction: discord.Interaction):
                 "Nobody's in here! Why not get it started?",
             )
             return
-        
+
         participants = event.get_participants()
 
         # Build the mogi list
@@ -756,9 +773,8 @@ async def command_clear(interaction: discord.Interaction):
 
         await conn.commit()
 
-@app.tree.command(
-    name="enable", description="Enables the channel to run mogis"
-)
+
+@app.tree.command(name="enable", description="Enables the channel to run mogis")
 @default_permissions(None)
 async def command_enable(interaction: discord.Interaction):
     """
@@ -793,6 +809,7 @@ async def command_enable(interaction: discord.Interaction):
 
         await conn.commit()
 
+
 @app.tree.command(name="disable", description="Disables the channel")
 @default_permissions(None)
 async def command_disable(interaction: discord.Interaction):
@@ -820,13 +837,17 @@ async def command_disable(interaction: discord.Interaction):
         await conn.commit()
 
 
-command_servers = app_commands.Group(name="servers", description="Ring Racers server management commands")
+command_servers = app_commands.Group(
+    name="servers", description="Ring Racers server management commands"
+)
 
 
 @command_servers.command(name="add", description="Adds a server to Gutbuster")
 @app_commands.describe(ip="The ip of the server")
 @app_commands.describe(label="A user-friendly name to describe the server")
-async def command_servers_add(interaction: discord.Interaction, ip: str, label: Optional[str]):
+async def command_servers_add(
+    interaction: discord.Interaction, ip: str, label: Optional[str]
+):
     """
     The /servers add command.
     """
@@ -853,8 +874,11 @@ async def command_servers_add(interaction: discord.Interaction, ip: str, label: 
     # Update label if the user passed no label
     if server.info is not None:
         async with app.db.connect() as conn:
-            await server.update_label(server.info.server_name, conn)
-            await conn.commit()
+            try:
+                await server.update_label(server.info.server_name, conn)
+                await conn.commit()
+            except IntegrityError:
+                pass
 
     await interaction.followup.send(view=ServersView(server, timeout=0))
 
@@ -862,10 +886,37 @@ async def command_servers_add(interaction: discord.Interaction, ip: str, label: 
 @command_servers.command(name="remove", description="Removes a server from Gutbuster")
 @app_commands.describe(ip_or_label="The ip of the server, or the server's label")
 async def command_servers_remove(interaction: discord.Interaction, ip_or_label: str):
-    pass
+    """
+    The /servers remove command.
+    """
+
+    if interaction.guild is None:
+        # Ignore any user commands
+        raise ValueError("Command not being called in a guild context?")
+
+    to_remove = []
+    for server in app.watcher.iter(interaction.guild):
+        ip = f"{server.remote}:{server.remote_port}"
+        if ip == ip_or_label:
+            to_remove.append(server)
+
+        # /remove removes one matched label or many ip matches
+        if server.label == ip_or_label:
+            to_remove.clear()
+            to_remove.append(server)
+            break
+
+    for server in to_remove:
+        await app.watcher.remove(server)
+
+    await interaction.response.send_message(
+        f"Removed {len(to_remove)} {'server' if len(to_remove) == 1 else 'servers'}"
+    )
 
 
-@command_servers.command(name="list", description="Lists all servers Gutbuster has registered")
+@command_servers.command(
+    name="list", description="Lists all servers Gutbuster has registered"
+)
 async def command_servers_list(interaction: discord.Interaction):
     """
     The /servers list command.
