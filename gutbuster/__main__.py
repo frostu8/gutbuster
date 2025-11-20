@@ -99,8 +99,13 @@ class ServerContainer(ui.Container):
                 # List all players
                 players = copy(server.players)
                 players.sort(key=lambda a: a.score, reverse=True)
-                for player in server.players:
-                    content += f"\n`{player.score:04}` {player.name}"
+                for player in players:
+                    score = str(player.score).rjust(4, " ")
+
+                    if player.team == 255:
+                        content += f"\n`{score}` *{player.name}*"
+                    else:
+                        content += f"\n`{score}` {player.name}"
 
             self.info = ui.TextDisplay(content)
 
@@ -108,8 +113,12 @@ class ServerContainer(ui.Container):
 
         if self.server.info is None:
             color = config.colors.server_offline
+        elif self.server.info.gametype_name == "Race":
+            color = config.colors.server_online_race
+        elif self.server.info.gametype_name == "Battle":
+            color = config.colors.server_online_battle
         else:
-            color = config.colors.server_online
+            color = config.colors.server_online_custom
 
         super().__init__(*children, accent_color=color)
 

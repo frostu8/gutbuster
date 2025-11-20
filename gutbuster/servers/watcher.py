@@ -1,6 +1,6 @@
 from .server import Server
-from .packet import ServerInfo
-from typing import List, Dict, Optional, Generator
+from .packet import ServerInfo, PlayerInfo
+from typing import List, Dict, Optional, Generator, Tuple
 from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncConnection
@@ -51,10 +51,10 @@ class WatchedServer(Server):
             {"id": self.id, "label": label, "now": now.isoformat()}
         )
 
-    async def knock(self) -> ServerInfo:
-        info = await super().knock()
+    async def knock(self) -> Tuple[ServerInfo, List[PlayerInfo]]:
+        res = await super().knock()
         self.last_updated = datetime.now()
-        return info
+        return res
 
 
 class ServerWatcher:
@@ -160,6 +160,7 @@ class ServerWatcher:
                 """),
                 {"id": server.id},
             )
+            conn.commit()
 
         self.servers.pop(server.id)
 

@@ -23,16 +23,22 @@ class Messages(object):
 
 @dataclass
 class Colors(object):
-    server_online: Color
+    server_online_race: Color
+    server_online_battle: Color
+    server_online_custom: Color
     server_offline: Color
 
     @classmethod
     def fromdict(cls, data: Dict[str, Any]) -> Self:
-        server_online = _get_str(data, "server_online", "#42ed53")
+        server_online_race = _get_str(data, "server_online_race", "#42ed53")
+        server_online_battle = _get_str(data, "server_online_battle", "#42ed53")
+        server_online_custom = _get_str(data, "server_online_custom", "#42ed53")
         server_offline = _get_str(data, "server_offline", "#d6240d")
 
         return cls(
-            server_online=Color.from_str(server_online),
+            server_online_race=Color.from_str(server_online_race),
+            server_online_battle=Color.from_str(server_online_battle),
+            server_online_custom=Color.from_str(server_online_custom),
             server_offline=Color.from_str(server_offline),
         )
 

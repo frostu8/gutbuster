@@ -81,7 +81,7 @@ class Server:
     def ping(self) -> float:
         return sum(self.pings) / len(self.pings)
 
-    async def knock(self) -> Tuple[ServerInfo, List[PlayerInfo]]:
+    async def knock(self, *, timeout: int | float = 5) -> Tuple[ServerInfo, List[PlayerInfo]]:
         """
         Asks for a ``ServerInfo`` frm the remote.
         """
@@ -90,12 +90,21 @@ class Server:
 
         # Create a socket to use for the lifetime of the knock
         async with await asyncudp.create_socket(remote_addr=remote_addr) as socket:
-            info, players = await self._get_info(socket)
+            # Ask multiple times
+            tries = 0
 
-        self.info = info
-        self.players = players
+            while tries < self.tries:
+                try:
+                    info, players = await self._get_info(socket, timeout)
 
-        return info, players
+                    self.info = info
+                    self.players = players
+
+                    return info, players
+                except TimeoutError:
+                    tries += 1
+
+        raise ConnectError(f"Failed to get server info after {tries} tries")
 
     async def _ask(self, socket: asyncudp.Socket, timeout: int | float = 5) -> bytes:
         # Creates an ask packet.
@@ -115,35 +124,25 @@ class Server:
 
         return buf
 
-    async def _get_info(self, socket: asyncudp.Socket, *, timeout: int | float = 5) -> Tuple[ServerInfo, List[PlayerInfo]]:
+    async def _get_info(self, socket: asyncudp.Socket, timeout: int | float = 5) -> Tuple[ServerInfo, List[PlayerInfo]]:
         timeout_at = datetime.now() + timedelta(seconds=timeout)
 
         # Collect data
         info = None
         players = []
 
-        # Ask multiple times
-        last_sent = None
-        tries = 0
-
-        while tries < self.tries:
+        first = True
+        while info is None or len(players) < info.number_of_players:
             start_time = datetime.now()
-            if timeout_at <= start_time:
-                tries += 1
-                continue
-            timeout = (timeout_at - start_time).total_seconds()
+            wait = max((timeout_at - start_time).total_seconds(), 0.0)
 
-            # Wait for remote's response.
-            try:
-                if last_sent is None or last_sent < tries:
-                    last_sent = tries
-                    buf = await self._ask(socket, timeout)
-                else:
-                    # Ride from the last ask request
-                    buf, _ = await asyncio.wait_for(socket.recvfrom(), timeout)
-            except TimeoutError:
-                tries += 1
-                continue
+            # Get data from server
+            if first:
+                # We need to ask for the data from the server to get some data
+                buf = await self._ask(socket, wait)
+                first = False
+            else:
+                buf, _ = await asyncio.wait_for(socket.recvfrom(), wait)
 
             try:
                 res = Packet.unpack(buf)
@@ -152,14 +151,7 @@ class Server:
                     info = res.info
                 if isinstance(res, PlayerInfoPacket):
                     players.extend(p for p in res.players if not p.is_empty)
-                    if info is not None and len(players) >= info.number_of_players:
-                        # Escape early, we got the data we want
-                        break
             except PacketError as err:
                 logger.warning(f"Got error {err} knocking for server {self.remote}:{self.remote_port}")
-                tries += 1
-
-        if info is None or len(players) < info.number_of_players:
-            raise ConnectError(f"Failed to get server info after {tries} tries")
 
         return info, players

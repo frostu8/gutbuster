@@ -1,6 +1,8 @@
 [color]
-server_online = "#42ed53"
-server_offline = "#d6240d"
+server_online_race = "#3eb3f7"
+server_online_battle = "#f7283c"
+server_online_custom = "#42ed53"
+server_offline = "#1b1b27"
 
 [messages]
 gathered = [
