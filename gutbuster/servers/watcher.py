@@ -1,10 +1,11 @@
 from .server import Server
 from .packet import ServerInfo, PlayerInfo
 from typing import List, Dict, Optional, Generator, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncConnection
 import discord
+import asyncio
 
 
 class WatchedServer(Server):
@@ -14,6 +15,7 @@ class WatchedServer(Server):
     updated_at: datetime
 
     last_updated: Optional[datetime]
+    update_event: asyncio.Event
 
     def __init__(
         self,
@@ -33,6 +35,7 @@ class WatchedServer(Server):
         self.updated_at = updated_at
 
         self.last_updated = None
+        self.update_event = asyncio.Event()
 
     async def update_label(self, label: str, conn: AsyncConnection) -> None:
         """
@@ -53,7 +56,12 @@ class WatchedServer(Server):
 
     async def knock(self) -> Tuple[ServerInfo, List[PlayerInfo]]:
         res = await super().knock()
-        self.last_updated = datetime.now()
+        self.last_updated = datetime.now(timezone.utc)
+
+        # Notify waiting tasks
+        self.update_event.set()
+        self.update_event.clear()
+
         return res
 
 
@@ -136,16 +144,20 @@ class ServerWatcher:
         return server
 
     def iter(
-        self, guild: discord.Guild | discord.Object
+        self, guild: Optional[discord.Guild | discord.Object] = None
     ) -> Generator[WatchedServer, None, None]:
         """
         Iterates over all servers attached to a guild.
         """
 
-        if guild.id in self.servers_by_guild:
-            servers = self.servers_by_guild[guild.id]
-            for server in servers:
+        if guild is None:
+            for server in self.servers.values():
                 yield server
+        else:
+            if guild.id in self.servers_by_guild:
+                servers = self.servers_by_guild[guild.id]
+                for server in servers:
+                    yield server
 
     async def remove(self, server: WatchedServer) -> None:
         """
@@ -160,7 +172,7 @@ class ServerWatcher:
                 """),
                 {"id": server.id},
             )
-            conn.commit()
+            await conn.commit()
 
         self.servers.pop(server.id)
 

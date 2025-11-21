@@ -10,7 +10,7 @@ from gutbuster.event import (
     get_active_events_for,
 )
 from gutbuster.config import load as load_config
-from gutbuster.servers import Server, PacketError, ConnectError, GameSpeed
+from gutbuster.servers import PacketError, ConnectError, GameSpeed, WatchedServer
 
 from dotenv import load_dotenv
 from typing import List, Callable, Awaitable, Any, Optional, Dict
@@ -19,9 +19,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 import discord
 from discord import AllowedMentions, ButtonStyle, ui, app_commands
+from discord.ui.separator import SeparatorSpacing
 from discord.app_commands import default_permissions
 from copy import copy
-import datetime
+from datetime import datetime, timedelta, timezone
+import asyncio
 import math
 import random
 import logging
@@ -41,41 +43,61 @@ app = App(intents=intents)
 
 
 class ServerContainer(ui.Container):
-    server: Server
-
+    server: WatchedServer
     header: ui.TextDisplay
 
-    info: Optional[ui.TextDisplay]
+    _task: Optional[asyncio.Task]
 
-    action_row: ui.ActionRow
-
-    def __init__(self, server: Server):
-        children = []
-
+    def __init__(self, server: WatchedServer):
         self.server = server
-
-        # TODO: Figure out a workaround for Discord having "security"
-        _join_url = f"ringracers://{self.server.remote}:{self.server.remote_port}"
+        self._task = None
 
         if self.server.info is None:
-            content = "🔴 Server is offline."
+            color = config.colors.server_offline
+        elif self.server.info.gametype_name == "Race":
+            color = config.colors.server_online_race
+        elif self.server.info.gametype_name == "Battle":
+            color = config.colors.server_online_battle
+        else:
+            color = config.colors.server_online_custom
+
+        super().__init__(accent_color=color)
+        self.regenerate()
+
+    async def _wait_until_update(self) -> None:
+        await self.server.update_event.wait()
+        self.regenerate()
+
+    def regenerate(self) -> None:
+        """
+        Regenerates the embed.
+        """
+
+        self.clear_items()
+
+        # TODO: Figure out a workaround for Discord having "security"
+        _join_url = f"ringracers://{self.server.ip}:{self.server.port}"
+
+        if self.server.info is None:
+            content = ""
+            if self.server.label is not None:
+                content += f"## {self.server.label}\n"
+
+            content += "🔴 Server is offline."
+
             self.header = ui.TextDisplay(content)
-
-            children.append(self.header)
-
-            self.separator = None
-            self.info = None
+            self.add_item(self.header)
         else:
             # Generate content
             content = ""
-            if server.label is not None:
-                content += f"## {server.label}\n"
+            if self.server.label is not None:
+                content += f"## {self.server.label}\n"
 
-            content += f"🟢 **IP** `{server.remote}:{server.remote_port}`"
+            content += f"🟢 **IP** `{self.server.ip}:{self.server.port}`"
             self.header = ui.TextDisplay(content)
 
-            children.append(self.header)
-            children.append(ui.Separator())
+            self.add_item(self.header)
+            self.add_item(ui.Separator(spacing=SeparatorSpacing.large))
 
             # Generate additional info
             game_speed = "2 Fast"
@@ -90,14 +112,14 @@ class ServerContainer(ui.Container):
                     pass
 
             content = (
-                f"**Map Name** {self.server.map_title}\n**Game Speed** {game_speed}"
+                f"**Map** {self.server.map_title}\n**Game Speed** {game_speed}"
             )
 
-            if len(server.players) > 0:
+            if len(self.server.players) > 0:
                 content += "\n\n**Players**"
 
                 # List all players
-                players = copy(server.players)
+                players = copy(self.server.players)
                 players.sort(key=lambda a: a.score, reverse=True)
                 for player in players:
                     score = str(player.score).rjust(4, " ")
@@ -107,33 +129,53 @@ class ServerContainer(ui.Container):
                     else:
                         content += f"\n`{score}` {player.name}"
 
-            self.info = ui.TextDisplay(content)
+            self.add_item(ui.TextDisplay(content))
 
-            children.append(self.info)
+            # Timestamp embed
+            if self.server.last_updated is not None:
+                epoch = datetime.fromtimestamp(0, timezone.utc)
 
-        if self.server.info is None:
-            color = config.colors.server_offline
-        elif self.server.info.gametype_name == "Race":
-            color = config.colors.server_online_race
-        elif self.server.info.gametype_name == "Battle":
-            color = config.colors.server_online_battle
-        else:
-            color = config.colors.server_online_custom
+                timestamp = math.trunc((self.server.last_updated - epoch).total_seconds())
+                footer_content = f"Last updated at <t:{timestamp}:T>"
 
-        super().__init__(*children, accent_color=color)
+                self.add_item(ui.TextDisplay(footer_content))
 
 
 class ServersView(ui.LayoutView):
+    message: Optional[discord.Message]
     containers: List[ServerContainer]
 
-    def __init__(self, *servers: Server, timeout: Optional[int | float]):
+    def __init__(self, *servers: WatchedServer, timeout: Optional[int | float] = 1800):
         super().__init__(timeout=timeout)
 
+        self.message = None
         self.containers = []
         for server in servers:
             container = ServerContainer(server)
             self.containers.append(container)
             self.add_item(container)
+
+
+    async def _realtime(self) -> None:
+        while True:
+            futures = (container._wait_until_update() for container in self.containers)
+            await next(asyncio.as_completed(futures))
+
+            # Update message
+            if self.message is not None:
+                await self.message.edit(view=self)
+
+    def realtime(self) -> None:
+        """
+        Updates the embed in real-time for the duration of the view's
+        existence.
+        """
+
+        self._task = asyncio.create_task(self._realtime())
+
+    async def on_timeout(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
 
 
 class VoteEntry(ui.Section):
@@ -179,7 +221,7 @@ class VoteEntry(ui.Section):
         self.quality = quality
         self.votes_needed = votes_needed
 
-        self.regenerate_label()
+        self.regenerate()
 
     @property
     def disabled(self):
@@ -192,7 +234,7 @@ class VoteEntry(ui.Section):
         if isinstance(self.accessory, ui.Button):
             self.accessory.disabled = self._disabled
 
-    def regenerate_label(self):
+    def regenerate(self):
         label = f"**{self.format.name}** Quality: `{self.quality:.3f}`"
 
         if self.anonymized:
@@ -238,7 +280,7 @@ class VoteView(ui.LayoutView):
     votes_needed: int
 
     selected_format: Optional[EventFormat] = None
-    timeout_time: datetime.datetime
+    timeout_time: datetime
 
     def __init__(
         self,
@@ -251,10 +293,11 @@ class VoteView(ui.LayoutView):
         super().__init__(timeout=timeout)
         self.flavor_text = flavor
 
+        self.message = None
         self.event = event
         self.votes_needed = votes_needed
 
-        self.timeout_time = datetime.datetime.now() + datetime.timedelta(
+        self.timeout_time = datetime.now() + timedelta(
             seconds=timeout
         )
 
@@ -320,7 +363,7 @@ class VoteView(ui.LayoutView):
         for format in self.formats:
             format.disabled = True
             format.anonymized = False
-            format.regenerate_label()
+            format.regenerate()
 
         if not self.is_finished():
             self.stop()
@@ -356,7 +399,7 @@ class VoteView(ui.LayoutView):
 
                 # Only regenerate label if
                 if not len(entry.votes) == old_len:
-                    entry.regenerate_label()
+                    entry.regenerate()
 
             entry = next(v for v in self.formats if v.format == format)
 
@@ -881,15 +924,17 @@ async def command_servers_add(
         pass
 
     # Update label if the user passed no label
-    if server.info is not None:
+    if server.server_name is not None:
         async with app.db.connect() as conn:
             try:
-                await server.update_label(server.info.server_name, conn)
+                await server.update_label(server.server_name, conn)
                 await conn.commit()
             except IntegrityError:
                 pass
 
-    await interaction.followup.send(view=ServersView(server, timeout=0))
+    view = ServersView(server)
+    view.message = await interaction.followup.send(view=view)
+    view.realtime()
 
 
 @command_servers.command(name="remove", description="Removes a server from Gutbuster")
@@ -903,16 +948,21 @@ async def command_servers_remove(interaction: discord.Interaction, ip_or_label: 
         # Ignore any user commands
         raise ValueError("Command not being called in a guild context?")
 
-    to_remove = []
+    to_remove = set()
     for server in app.watcher.iter(interaction.guild):
-        ip = f"{server.remote}:{server.remote_port}"
+        # Check canonical name
+        if server.remote == ip_or_label:
+            to_remove.add(server)
+
+        # Check IP name
+        ip = f"{server.ip}:{server.port}"
         if ip == ip_or_label:
-            to_remove.append(server)
+            to_remove.add(server)
 
         # /remove removes one matched label or many ip matches
         if server.label == ip_or_label:
             to_remove.clear()
-            to_remove.append(server)
+            to_remove.add(server)
             break
 
     for server in to_remove:
@@ -944,12 +994,13 @@ async def command_servers_list(interaction: discord.Interaction):
     servers = []
 
     for server in app.watcher.iter(interaction.guild):
-        # Freshly update all latest servers
-        await server.knock()
+        #await server.knock()
         servers.append(server)
 
     if len(servers) > 0:
-        await interaction.followup.send(view=ServersView(*servers, timeout=0))
+        view = ServersView(*servers)
+        view.message = await interaction.followup.send(view=view)
+        view.realtime()
     else:
         await interaction.followup.send(
             "No servers added!\n"

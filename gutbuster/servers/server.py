@@ -4,6 +4,7 @@ import asyncudp
 import asyncio
 import ipaddress
 import logging
+import socket
 from datetime import datetime, timedelta
 
 
@@ -24,8 +25,11 @@ class Server:
     A Ring Racers server.
     """
 
-    remote: ipaddress.IPv4Address | ipaddress.IPv6Address
-    remote_port: int
+    remote: str
+
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address
+    port: int
+
     tries: int
 
     label: Optional[str]
@@ -38,14 +42,17 @@ class Server:
     _server_name: Optional[str]
 
     def __init__(self, remote: str, *, label: Optional[str] = None, tries: int = 5):
-        ip, separator, port = remote.rpartition(':')
-        assert separator
-
-        self.remote = ipaddress.ip_address(ip)
-        self.remote_port = int(port)
+        self.remote = remote
+        self.label = label
         self.tries = tries
 
-        self.label = label
+        ip, separator, port = remote.rpartition(":")
+        self.ip = ipaddress.ip_address(socket.gethostbyname(ip))
+
+        if separator:
+            self.port = int(port)
+        else:
+            self.port = 5029
 
         self.info = None
         self.players = []
@@ -86,7 +93,7 @@ class Server:
         Asks for a ``ServerInfo`` frm the remote.
         """
 
-        remote_addr = (str(self.remote), self.remote_port)
+        remote_addr = (str(self.ip), self.port)
 
         # Create a socket to use for the lifetime of the knock
         async with await asyncudp.create_socket(remote_addr=remote_addr) as socket:
@@ -152,6 +159,6 @@ class Server:
                 if isinstance(res, PlayerInfoPacket):
                     players.extend(p for p in res.players if not p.is_empty)
             except PacketError as err:
-                logger.warning(f"Got error {err} knocking for server {self.remote}:{self.remote_port}")
+                logger.warning(f"Got error {err} knocking for server {self.remote}")
 
         return info, players
