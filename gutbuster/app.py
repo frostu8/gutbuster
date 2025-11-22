@@ -5,9 +5,7 @@ import inspect
 import re
 from sqlalchemy.ext.asyncio import AsyncEngine
 from discord import app_commands
-from discord.ext import tasks
-from gutbuster.servers import ServerWatcher
-from typing import Awaitable, List, Any, Self, ClassVar, Optional
+from typing import List, Any, Self, ClassVar, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +113,13 @@ class Module(metaclass=ModuleMeta):
 
         return self
 
+    def on_setup(self, _tree: app_commands.CommandTree) -> None:
+        """
+        Called during setup phase, after commands are registered.
+        """
+
+        pass
+
 
 class GroupModule(Module):
     __is_app_command_group__: ClassVar[bool] = True
@@ -132,7 +137,6 @@ class App(discord.Client):
     tree: app_commands.CommandTree
 
     db: AsyncEngine
-    watcher: ServerWatcher
 
     modules: List[Module]
 
@@ -150,7 +154,6 @@ class App(discord.Client):
     async def setup_hook(self) -> None:
         # Connects to a database.
         # self.db = create_async_engine("sqlite+aiosqlite:///dev_gutbuster.sqlite")
-        self.watcher = ServerWatcher(db=self.db)
 
         # Registers all modules.
         for module in self.modules:
@@ -164,13 +167,11 @@ class App(discord.Client):
         # Syncs the current commands with Discord
         await self.tree.sync()
 
-        await self.watcher.load()
-        self.knock_servers.start()
+        for module in self.modules:
+            if asyncio.iscoroutinefunction(module.on_setup):
+                await module.on_setup(self.tree)
+            else:
+                module.on_setup(self.tree)
 
     async def on_ready(self) -> None:
         logger.info(f"Logged in as {self.user}")
-
-    @tasks.loop(seconds=30.0)
-    async def knock_servers(self) -> None:
-        for server in self.watcher.iter():
-            await server.knock()
