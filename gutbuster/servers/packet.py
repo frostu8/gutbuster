@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from enum import Enum, Flag
+from enum import Enum, Flag, unique
 from typing import Optional, Dict, Self, Type, Any, List, Tuple
 from abc import ABC, abstractmethod
 import struct
@@ -36,6 +36,7 @@ class PacketTypeError(PacketError):
         self.kind = kind
 
 
+@unique
 class RefuseReason(Enum):
     """
     Server refuse reasons.
@@ -46,6 +47,7 @@ class RefuseReason(Enum):
     FULL = 2
 
 
+@unique
 class GameSpeed(Enum):
     """
     Server gamespeeds.
@@ -56,6 +58,7 @@ class GameSpeed(Enum):
     HARD = 2  # Gear 3
 
 
+@unique
 class PacketType(Enum):
     ASKINFO = 12
     SERVERINFO = 13
@@ -64,6 +67,7 @@ class PacketType(Enum):
     MOREFILESNEEDED = 33
 
 
+@unique
 class ServerFlags(Flag):
     """
     Server flags.

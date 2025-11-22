@@ -231,7 +231,7 @@ class VoteEntry(ui.Section):
     def disabled(self, value: bool):
         self._disabled = value
 
-        if isinstance(self.accessory, ui.Button):
+        if self.accessory is ui.Button:
             self.accessory.disabled = self._disabled
 
     def regenerate(self):
