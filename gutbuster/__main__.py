@@ -1,7 +1,10 @@
 from gutbuster.app import App
-from gutbuster.user import get_or_create_user, get_user, User
-from gutbuster.room import get_room, create_room, EventFormat
-from gutbuster.event import (
+from gutbuster.model import (
+    get_or_create_user,
+    get_user,
+    User,
+    get_room,
+    EventFormat,
     get_active_event,
     create_event,
     EventStatus,
@@ -9,6 +12,7 @@ from gutbuster.event import (
     get_event,
     get_active_events_for,
 )
+from gutbuster.room import RoomModule, RoomConfigModule
 from gutbuster.config import load as load_config
 from gutbuster.servers import PacketError, ConnectError, GameSpeed, WatchedServer
 
@@ -16,7 +20,7 @@ from dotenv import load_dotenv
 from typing import List, Callable, Awaitable, Any, Optional, Dict
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 import discord
 from discord import AllowedMentions, ButtonStyle, ui, app_commands
 from discord.ui.separator import SeparatorSpacing
@@ -38,9 +42,16 @@ load_dotenv()
 # Load our toml file for additional config
 config = load_config("config.toml")
 
+# Load database
+db = create_async_engine("sqlite+aiosqlite:///dev_gutbuster.sqlite")
+
 intents = discord.Intents.default()
 app = App(intents=intents)
+app.db = db # TODO: Not do this.
 
+# Load room commands
+app.add_module(RoomModule(db))
+app.add_module(RoomConfigModule(db))
 
 class ServerContainer(ui.Container):
     server: WatchedServer
@@ -111,9 +122,7 @@ class ServerContainer(ui.Container):
                 case _:
                     pass
 
-            content = (
-                f"**Map** {self.server.map_title}\n**Game Speed** {game_speed}"
-            )
+            content = f"**Map** {self.server.map_title}\n**Game Speed** {game_speed}"
 
             if len(self.server.players) > 0:
                 content += "\n\n**Players**"
@@ -135,7 +144,9 @@ class ServerContainer(ui.Container):
             if self.server.last_updated is not None:
                 epoch = datetime.fromtimestamp(0, timezone.utc)
 
-                timestamp = math.trunc((self.server.last_updated - epoch).total_seconds())
+                timestamp = math.trunc(
+                    (self.server.last_updated - epoch).total_seconds()
+                )
                 footer_content = f"Last updated at <t:{timestamp}:T>"
 
                 self.add_item(ui.TextDisplay(footer_content))
@@ -154,7 +165,6 @@ class ServersView(ui.LayoutView):
             container = ServerContainer(server)
             self.containers.append(container)
             self.add_item(container)
-
 
     async def _realtime(self) -> None:
         while True:
@@ -297,9 +307,7 @@ class VoteView(ui.LayoutView):
         self.event = event
         self.votes_needed = votes_needed
 
-        self.timeout_time = datetime.now() + timedelta(
-            seconds=timeout
-        )
+        self.timeout_time = datetime.now() + timedelta(seconds=timeout)
 
         for i, format in enumerate(event.room.formats):
             view = VoteEntry(format, self.vote, votes_needed=self.votes_needed)
@@ -826,69 +834,6 @@ async def command_clear(interaction: discord.Interaction):
         await conn.commit()
 
 
-@app.tree.command(name="enable", description="Enables the channel to run mogis")
-@default_permissions(None)
-async def command_enable(interaction: discord.Interaction):
-    """
-    The /enable command.
-
-    Enables Mogis to take place in a channel.
-    """
-
-    if interaction.channel is None:
-        # Ignore any user commands
-        raise ValueError("Command not being called in a guild context?")
-
-    async with app.db.connect() as conn:
-        # Find the room
-        room = await get_room(interaction.channel, conn)
-        if room is None:
-            # The admin wants to enable this channel!
-            # Make the room, and then make a default FFA format.
-            room = await create_room(interaction.channel, conn)
-            await room.add_format("FFA", conn)
-
-            await interaction.response.send_message(
-                f"Channel {interaction.channel.mention} has been enabled and initialized to run mogis.\nFormat `FFA` automatically added.",
-            )
-        else:
-            if not room.enabled:
-                await room.enable(conn)
-
-            await interaction.response.send_message(
-                f"Channel {interaction.channel.mention} has been enabled.",
-            )
-
-        await conn.commit()
-
-
-@app.tree.command(name="disable", description="Disables the channel")
-@default_permissions(None)
-async def command_disable(interaction: discord.Interaction):
-    """
-    The /disable command.
-
-    Disables the channel's ability to run Mogis.
-    """
-
-    if interaction.channel is None:
-        # Ignore any user commands
-        raise ValueError("Command not being called in a guild context?")
-
-    async with app.db.connect() as conn:
-        # Find the room
-        room = await get_room(interaction.channel, conn)
-        if room is not None and room.enabled:
-            # Disable the room
-            await room.disable(conn)
-
-        await interaction.response.send_message(
-            f"Channel {interaction.channel.mention} has been disabled.",
-        )
-
-        await conn.commit()
-
-
 command_servers = app_commands.Group(
     name="servers", description="Ring Racers server management commands"
 )
@@ -994,7 +939,7 @@ async def command_servers_list(interaction: discord.Interaction):
     servers = []
 
     for server in app.watcher.iter(interaction.guild):
-        #await server.knock()
+        # await server.knock()
         servers.append(server)
 
     if len(servers) > 0:

@@ -1,4 +1,4 @@
-from .packet import ServerInfo, Packet, ServerInfoPacket, AskPacket, strip_colors, PlayerInfo, PacketError, PlayerInfoPacket, MAX_PLAYERS
+from .packet import ServerInfo, Packet, ServerInfoPacket, AskPacket, strip_colors, PlayerInfo, PacketError, PlayerInfoPacket
 from typing import Optional, List, Tuple
 import asyncudp
 import asyncio

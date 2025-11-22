@@ -6,11 +6,12 @@ import discord
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, List, Sequence
-from gutbuster.room import Room, EventFormat, get_room, FormatSelectMode
-from gutbuster.user import User, Rating
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.exc import IntegrityError
+
+from .room import Room, EventFormat, get_room, FormatSelectMode
+from .user import User, Rating
 
 logger = logging.getLogger(__name__)
 
