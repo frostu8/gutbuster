@@ -16,7 +16,7 @@ class RoomConfigModule(
     GroupModule,
     name="configure",
     description="Configures a channel's settings",
-    default_permissions=None,
+    default_permissions=discord.Permissions.none(),
 ):
     db: AsyncEngine
 
