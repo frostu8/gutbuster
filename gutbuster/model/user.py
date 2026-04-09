@@ -45,7 +45,6 @@ async def get_user(discord_user: Member, conn: AsyncConnection) -> User | None:
         SELECT u.id, u.name, u.inserted_at, u.updated_at
         FROM user u
         WHERE u.discord_user_id = :id
-        ORDER BY r.inserted_at DESC
         LIMIT 1
         """),
         {"id": discord_user.id},

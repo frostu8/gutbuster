@@ -84,17 +84,7 @@ class Event(object):
 
         res = await conn.execute(
             text("""
-            WITH recent_ratings AS (
-                SELECT r1.id, r1.user_id, r1.rating, r1.deviation
-                FROM rating r1, rating r2
-                WHERE r2.inserted_at <= :inserted_at
-                GROUP BY r1.id, r1.user_id, r1.inserted_at, r1.rating, r1.deviation
-                HAVING r1.inserted_at = MAX(r2.inserted_at)
-            )
             SELECT
-                r.id AS rating_id,
-                r.rating,
-                r.deviation,
                 p.id,
                 p.user_id,
                 p.score,
@@ -105,13 +95,11 @@ class Event(object):
                 u.inserted_at AS user_inserted_at,
                 u.updated_at AS user_updated_at
             FROM participant p, user u
-            LEFT OUTER JOIN recent_ratings r
-            ON r.user_id = p.user_id
             WHERE
                 p.user_id = u.id
                 AND p.event_id = :event_id
             """),
-            {"event_id": self.id, "inserted_at": self.inserted_at.isoformat()},
+            {"event_id": self.id},
         )
 
         self.participants = []
