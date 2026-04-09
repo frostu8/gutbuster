@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.exc import IntegrityError
 
 from .room import Room, EventFormat, get_room, FormatSelectMode
-from .user import User, Rating
+from .user import User
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,6 @@ class Participant(object):
     id: int
     event_id: int
     user: User
-    rating: Optional[Rating]
     score: Optional[int] = field(default=None)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
@@ -128,9 +127,6 @@ class Event(object):
                 id=row.id,
                 event_id=self.id,
                 user=user,
-                rating=Rating(
-                    row.rating, row.deviation, id=row.rating_id, user_id=row.user_id
-                ),
                 score=row.score,
                 inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
                 updated_at=datetime.datetime.fromisoformat(row.updated_at),
@@ -223,7 +219,6 @@ class Event(object):
             id=row.id,
             event_id=self.id,
             user=user,
-            rating=user.rating,
             inserted_at=now,
             updated_at=now,
         )

@@ -1,4 +1,4 @@
-from .user import Rating, User, get_or_create_user, get_user
+from .user import User, get_or_create_user, get_user
 from .room import EventFormat, FormatSelectMode, Room, create_room, get_room
 from .event import (
     Event,

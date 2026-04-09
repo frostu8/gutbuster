@@ -8,35 +8,17 @@ import datetime
 type Member = discord.User | discord.Member
 
 
-# Every fiber in my body tells me this is very bad and is going to cause a Fuck
-# Ton Of Problems when the codebase gets more complicated but, as they say,
-# when in Rome, do as the Romans do.
-# class RatedUser(User):
-# Nope, nevermind. I am too much of a pussy. I am not strong enough for the
-# miseries of OOP. Not built for these streets.
-@dataclass
-class Rating(object):
-    """
-    A user's rating.
-    """
-
-    id: int = field(kw_only=True)
-    user_id: int = field(kw_only=True)
-    rating: float
-    deviation: float
-
 @dataclass(kw_only=True)
 class User(object):
     """
     A Gutbuster user.
 
-    Stores some information about the user, most importantly: their rating.
+    Stores some information about the user.
     """
 
     id: int
     user: Member | discord.Object
     name: str
-    rating: Rating | None = field(default=None)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
 
@@ -60,10 +42,8 @@ async def get_user(discord_user: Member, conn: AsyncConnection) -> User | None:
     # Try to find the user if they exist
     res = await conn.execute(
         text("""
-        SELECT u.id, u.name, r.id AS rating_id, r.rating, r.deviation, u.inserted_at, u.updated_at
+        SELECT u.id, u.name, u.inserted_at, u.updated_at
         FROM user u
-        LEFT OUTER JOIN rating r
-        ON u.id = r.user_id
         WHERE u.discord_user_id = :id
         ORDER BY r.inserted_at DESC
         LIMIT 1
@@ -95,25 +75,14 @@ async def get_user(discord_user: Member, conn: AsyncConnection) -> User | None:
 
         name = discord_user.name
 
-    if row.rating is None or row.deviation is None:
-        # This user is unrated...
-        return User(
-            id=id,
-            user=discord_user,
-            name=name,
-            inserted_at=inserted_at,
-            updated_at=updated_at,
-        )
-    else:
-        # This user is rated!
-        return User(
-            id=id,
-            user=discord_user,
-            name=name,
-            rating=Rating(row.rating, row.deviation, id=row.rating_id, user_id=id),
-            inserted_at=inserted_at,
-            updated_at=updated_at,
-        )
+    # This user is unrated...
+    return User(
+        id=id,
+        user=discord_user,
+        name=name,
+        inserted_at=inserted_at,
+        updated_at=updated_at,
+    )
 
 
 async def get_or_create_user(discord_user: Member, conn: AsyncConnection) -> User:
