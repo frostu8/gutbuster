@@ -5,7 +5,7 @@ import inspect
 import re
 from sqlalchemy.ext.asyncio import AsyncEngine
 from discord import app_commands
-from typing import List, Any, Self, ClassVar, Optional
+from typing import List, Any, Self, ClassVar, Optional, Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ class Module(metaclass=ModuleMeta):
 
         return self
 
-    def on_setup(self, _tree: app_commands.CommandTree) -> None:
+    def on_setup(self, tree: app_commands.CommandTree) -> None | Awaitable[None]:
         """
         Called during setup phase, after commands are registered.
         """
@@ -168,7 +168,7 @@ class App(discord.Client):
         await self.tree.sync()
 
         for module in self.modules:
-            if asyncio.iscoroutinefunction(module.on_setup):
+            if inspect.iscoroutinefunction(module.on_setup):
                 await module.on_setup(self.tree)
             else:
                 module.on_setup(self.tree)

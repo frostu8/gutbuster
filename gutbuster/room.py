@@ -1,6 +1,6 @@
 import discord
 from enum import Enum, unique
-from discord import app_commands
+from discord import app_commands, TextChannel
 from discord.app_commands import default_permissions
 from sqlalchemy.ext.asyncio import AsyncEngine
 from gutbuster.model import get_room, create_room
@@ -12,20 +12,20 @@ class ConfigOption(Enum):
     PLAYERS_REQUIRED = "players_required"
 
 
-class RoomConfigModule(
-    GroupModule,
-    name="configure",
-    description="Configures a channel's settings",
-    default_permissions=discord.Permissions.none(),
-):
-    db: AsyncEngine
+# class RoomConfigModule(
+#     GroupModule,
+#     name="configure",
+#     description="Configures a channel's settings",
+#     default_permissions=discord.Permissions.none(),
+# ):
+#     db: AsyncEngine
 
-    def __init__(self, db: AsyncEngine):
-        self.db = db
+#     def __init__(self, db: AsyncEngine):
+#         self.db = db
 
-    @app_commands.command(name="set", description="Sets a config option")
-    async def set_option(self, interaction: discord.Interaction) -> None:
-        pass
+#     @app_commands.command(name="set", description="Sets a config option")
+#     async def set_option(self, interaction: discord.Interaction) -> None:
+#         pass
 
 
 class RoomModule(Module):
@@ -43,7 +43,7 @@ class RoomModule(Module):
         Enables Mogis to take place in a channel.
         """
 
-        if interaction.channel is None:
+        if not isinstance(interaction.channel, TextChannel):
             # Ignore any user commands
             raise ValueError("Command not being called in a guild context?")
 
@@ -78,7 +78,7 @@ class RoomModule(Module):
         Disables the channel's ability to run Mogis.
         """
 
-        if interaction.channel is None:
+        if not isinstance(interaction.channel, TextChannel):
             # Ignore any user commands
             raise ValueError("Command not being called in a guild context?")
 
