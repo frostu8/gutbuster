@@ -6,7 +6,8 @@ from .event import (
     Participant,
     create_event,
     get_event,
-    get_active_event,
+    get_active_events,
+    get_current_event,
     get_active_events_for,
 )
 
@@ -25,6 +26,7 @@ __all__ = [
     "Participant",
     "create_event",
     "get_event",
-    "get_active_event",
+    "get_current_event",
+    "get_active_events",
     "get_active_events_for",
 ]

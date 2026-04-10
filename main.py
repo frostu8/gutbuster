@@ -6,7 +6,6 @@ from gutbuster.model import (
     User,
     get_room,
     EventFormat,
-    get_active_event,
     create_event,
     EventStatus,
     Event,

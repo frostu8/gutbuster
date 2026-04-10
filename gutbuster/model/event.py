@@ -41,7 +41,7 @@ class Participant(object):
         return self.inserted_at < other.inserted_at
 
     def __le__(self, other):
-        return self.current_value <= other.current_value
+        return self.inserted_at <= other.inserted_at
 
 
 @dataclass(kw_only=True)
@@ -385,6 +385,73 @@ async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[E
 
     return events
 
+
+async def get_active_events(guild_id: int, conn: AsyncConnection) -> Sequence[Event]:
+    """
+    Gets all active mogis in a guild.
+    """
+
+    res = await conn.execute(
+        text("""
+        SELECT
+            e.*,
+            r.discord_channel_id,
+            r.discord_guild_id,
+            r.enabled AS room_enabled,
+            r.players_required,
+            r.format_selection_mode,
+            r.votes_required,
+            r.inserted_at AS room_inserted_at,
+            r.updated_at AS room_updated_at,
+            f.name AS format_name
+        FROM
+            event e, room r
+        LEFT OUTER JOIN
+            event_format f
+        ON e.format_id = f.id
+        WHERE
+            e.room_id = r.id
+            AND r.discord_guild_id = :guild_id
+            AND (e.status = 0 OR e.status = 1)
+        """),
+        {"guild_id": guild_id}
+    )
+
+    events = []
+    for row in res:
+        # Build the room
+        room = Room(
+            id=row.room_id,
+            discord_guild_id=row.discord_guild_id,
+            channel=discord.Object(row.discord_channel_id),
+            enabled=row.room_enabled,
+            players_required=row.players_required,
+            format_selection_mode=FormatSelectMode(row.format_selection_mode),
+            votes_required=row.votes_required,
+            inserted_at=datetime.datetime.fromisoformat(row.room_inserted_at),
+            updated_at=datetime.datetime.fromisoformat(row.room_updated_at),
+        )
+        await room.preload_formats(conn)
+
+        format = None
+        if row.format_id:
+            format = EventFormat(id=row.format_id, name=row.format_name)
+
+        # Load the event
+        event = Event(
+            id=row.id,
+            short_id=row.short_id,
+            room=room,
+            status=EventStatus(row.status),
+            format=format,
+            inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
+            updated_at=datetime.datetime.fromisoformat(row.updated_at),
+        )
+        events.append(event)
+
+    return events
+
+
 async def get_event(id: int, conn: AsyncConnection) -> Event:
     """
     Gets an existing event.
@@ -429,7 +496,7 @@ async def get_event(id: int, conn: AsyncConnection) -> Event:
     return event
 
 
-async def get_active_event(room: Room, conn: AsyncConnection) -> Optional[Event]:
+async def get_current_event(room: Room, conn: AsyncConnection) -> Optional[Event]:
     """
     Gets the latest currently active event in a room.
     """

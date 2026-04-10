@@ -7,13 +7,12 @@ from gutbuster.model import (
     User,
     get_room,
     EventFormat,
-    get_active_event,
     create_event,
     EventStatus,
     Event,
     get_event,
     get_active_events_for,
-    Participant, Room,
+    Participant, Room, get_current_event, get_active_events,
 )
 from gutbuster.room import RoomModule
 from gutbuster.config import load as load_config, Config
@@ -432,7 +431,7 @@ class VoteView(ui.LayoutView):
 
         self.timeout_time = datetime.now() + timedelta(seconds=timeout)
 
-        for i, format in enumerate(event.room.formats):
+        for _, format in enumerate(event.room.formats):
             view = VoteEntry(self.db, format, self.vote, votes_needed=self.votes_needed)
             self.formats.append(view)
             self.container.add_item(view)
@@ -628,7 +627,7 @@ class QueueModule(Module):
                 return
 
             # Get the currently active event
-            event = await get_active_event(room, conn)
+            event = await get_current_event(room, conn)
             if event is None:
                 # Users can create mogis by simply canning in a channel.
                 event = await create_event(room, conn)
@@ -687,7 +686,7 @@ class QueueModule(Module):
                 return
 
             # Get the currently active event
-            event = await get_active_event(room, conn)
+            event = await get_current_event(room, conn)
             if event is None or not event.has(user):
                 await interaction.response.send_message(
                     f"{name}, you're not in the queue.\nUse </c:{self.command_can.id}> to enter the queue.",
@@ -730,6 +729,7 @@ class QueueModule(Module):
 
             events = await get_active_events_for(user, conn)
             for event in events:
+                await event.preload_participants(conn)
                 # Leave the event
                 await event.leave(user, conn)
 
@@ -774,7 +774,7 @@ class QueueModule(Module):
                 return
 
             # Get the currently active event
-            event = await get_active_event(room, conn)
+            event = await get_current_event(room, conn)
             if event is None:
                 interaction.response.send_message(
                     "Nobody's in here! Why not get it started?",
@@ -797,6 +797,56 @@ class QueueModule(Module):
 
                 discord_user = await participant.user.fetch_user(interaction.client)
                 message += f"\n`{i + 1}.` {discord_user.mention}"
+
+            await interaction.response.send_message(
+                message, allowed_mentions=AllowedMentions.none()
+            )
+
+
+    @app_commands.command(name="ml", description="Lists all gathering and started mogis in the server")
+    async def list_events(self, interaction: discord.Interaction):
+        """
+        The /ml command.
+
+        Lists all gathering and started mogis in the server.
+        """
+
+        if not isinstance(interaction.channel, TextChannel):
+            # Ignore any user commands
+            raise ValueError("Command not being called in a guild context?")
+
+        async with self.db.connect() as conn:
+            # Find all events in a guild, and preload participants
+            events = await get_active_events(interaction.channel.guild.id, conn)
+            for event in events:
+                await event.preload_participants(conn)
+
+            # Count mogi
+            event_count = len(events)
+            started_event_count = sum(1 for e in events if e.status == EventStatus.STARTED)
+
+            message = f"There are {event_count} active mogi and {started_event_count} full mogi."
+
+            # Go into detail about each queue
+            for event in events:
+                player_count = len(event.get_participants())
+                max_player_count = event.room.players_required
+
+                channel = event.room.channel
+                if isinstance(channel, discord.Object):
+                    channel = interaction.client.get_channel(channel.id)
+                if not isinstance(channel, discord.TextChannel):
+                    raise ValueError("Mogi started in a non-text channel context")
+
+                # Create queue information
+                message += f"\n\n{channel.mention} ({channel.name}) - {player_count}/{max_player_count}\n"
+                for i, player in enumerate(event.get_participants()):
+                    user = await player.user.fetch_user(interaction.client)
+
+                    if i > 0:
+                        message += f", {user.mention}"
+                    else:
+                        message += f"{user.mention}"
 
             await interaction.response.send_message(
                 message, allowed_mentions=AllowedMentions.none()
@@ -829,7 +879,7 @@ class QueueModule(Module):
                 return
 
             # Get the currently active event
-            event = await get_active_event(room, conn)
+            event = await get_current_event(room, conn)
             if event is None or event.status == EventStatus.LFG:
                 await interaction.response.send_message(
                     "A mogi hasn't started yet!",
@@ -890,7 +940,7 @@ class QueueModule(Module):
                 return
 
             # Get the currently active event
-            event = await get_active_event(room, conn)
+            event = await get_current_event(room, conn)
             if event is not None:
                 await event.delete(conn)
 
