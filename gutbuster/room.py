@@ -7,27 +7,6 @@ from gutbuster.model import get_room, create_room
 from gutbuster.app import Module, GroupModule
 
 
-@unique
-class ConfigOption(Enum):
-    PLAYERS_REQUIRED = "players_required"
-
-
-# class RoomConfigModule(
-#     GroupModule,
-#     name="configure",
-#     description="Configures a channel's settings",
-#     default_permissions=discord.Permissions.none(),
-# ):
-#     db: AsyncEngine
-
-#     def __init__(self, db: AsyncEngine):
-#         self.db = db
-
-#     @app_commands.command(name="set", description="Sets a config option")
-#     async def set_option(self, interaction: discord.Interaction) -> None:
-#         pass
-
-
 class RoomModule(Module):
     db: AsyncEngine
 

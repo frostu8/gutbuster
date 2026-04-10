@@ -120,6 +120,16 @@ class Module(metaclass=ModuleMeta):
 
         pass
 
+    def on_message(self, message: discord.Message) -> None | Awaitable[None]:
+        """
+        Called when a message is received over the gateway
+        """
+
+        pass
+
+    def on_interaction(self, interaction: discord.Interaction) -> None | Awaitable[None]:
+        pass
+
 
 class GroupModule(Module):
     __is_app_command_group__: ClassVar[bool] = True
@@ -175,3 +185,17 @@ class App(discord.Client):
 
     async def on_ready(self) -> None:
         logger.info(f"Logged in as {self.user}")
+
+    async def on_message(self, message: discord.Message) -> None:
+        for module in self.modules:
+            if inspect.iscoroutinefunction(module.on_message):
+                await module.on_message(message)
+            else:
+                module.on_message(message)
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        for module in self.modules:
+            if inspect.iscoroutinefunction(module.on_interaction):
+                await module.on_interaction(interaction)
+            else:
+                module.on_interaction(interaction)

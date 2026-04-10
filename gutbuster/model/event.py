@@ -5,7 +5,7 @@ import logging
 import discord
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, List, Sequence
+from typing import Optional, List, Sequence, Self
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.exc import IntegrityError
@@ -36,6 +36,12 @@ class Participant(object):
     score: Optional[int] = field(default=None)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
+
+    def __lt__(self, other: Self):
+        return self.inserted_at < other.inserted_at
+
+    def __le__(self, other):
+        return self.current_value <= other.current_value
 
 
 @dataclass(kw_only=True)

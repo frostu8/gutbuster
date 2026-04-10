@@ -1,3 +1,5 @@
+from math import floor, ceil
+from dataclasses import dataclass
 from gutbuster.app import Module
 from gutbuster.model import (
     get_or_create_user,
@@ -11,13 +13,14 @@ from gutbuster.model import (
     Event,
     get_event,
     get_active_events_for,
+    Participant, Room,
 )
 from gutbuster.room import RoomModule
 from gutbuster.config import load as load_config, Config
 from gutbuster.servers import ServerWatcher, ServersModule
 
 from dotenv import load_dotenv
-from typing import List, Callable, Awaitable, Any, Optional, Dict
+from typing import List, Callable, Awaitable, Any, Optional, Dict, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine, AsyncEngine
 import discord
@@ -29,6 +32,187 @@ import random
 import logging
 import os
 import sys
+import asyncio
+import heapq
+
+
+class UserActivity:
+    """
+    Tracks the activity of users by channel.
+    """
+
+    db: AsyncEngine
+    client: discord.Client
+
+    channel: discord.TextChannel
+    member: discord.Member
+
+    warning_task: Optional[asyncio.Task[None]]
+    drop_task: Optional[asyncio.Task[None]]
+
+    def __init__(self, db: AsyncEngine, client: discord.Client, channel: discord.TextChannel, member: discord.Member):
+        self.db = db
+        self.client = client
+
+        self.channel = channel
+        self.member = member
+
+        self.warning_task = None
+        self.drop_task = None
+
+        self.task = None
+
+    async def touch(self, *, member: Optional[discord.Member] = None):
+        """
+        Notifies that there was a change in the player's activity.
+        """
+
+        # Cancel current wait task
+        if self.warning_task:
+            self.warning_task.cancel()
+        if self.drop_task:
+            self.drop_task.cancel()
+
+        if member:
+            self.member = member
+
+        now = datetime.now()
+
+        async with self.db.connect() as conn:
+            room = await get_room(self.channel, conn)
+
+        if room is None:
+            return
+
+        drop_time = None
+        if room.inactivity_drop_after > 0:
+            drop_time = now + timedelta(seconds=room.inactivity_drop_after)
+            self.drop_task = asyncio.create_task(self._drop(drop_time))
+
+        if drop_time and room.inactivity_warning_after > 0:
+            warning_time = now + timedelta(seconds=room.inactivity_warning_after)
+            self.warning_task = asyncio.create_task(self._warning(warning_time, drop_time))
+
+    async def _warning(self, warning_time: datetime, drop_time: datetime):
+        now = datetime.now()
+
+        # waiting time
+        await asyncio.sleep(max((warning_time - now).seconds, 0))
+
+        now = datetime.now()
+
+        if drop_time > now:
+            async with self.db.connect() as conn:
+                # Fetch the user from the database
+                user = await get_user(self.member, conn)
+                if user is None:
+                    # The user hasn't been added yet, just ignore
+                    return
+
+                # Get active events and filter
+                events = await get_active_events_for(user, conn)
+
+                try:
+                    event = next(e for e in events if e.room.channel.id == self.channel.id)
+                    should_warn = event.status == EventStatus.LFG
+                except StopIteration:
+                    # User left event, no need to warn
+                    should_warn = False
+
+            if should_warn:
+                minutes = ceil((drop_time - now).seconds / 60)
+
+                time_str = str(minutes)
+                if minutes == 1:
+                    time_str += " minute"
+                else:
+                    time_str += " minutes"
+
+                await self.channel.send(
+                    f"{self.member.mention}, please type something within {time_str} to keep your spot in the mogi",
+                )
+
+    async def _drop(self, drop_time: datetime):
+        now = datetime.now()
+
+        # waiting time
+        await asyncio.sleep(max((drop_time - now).seconds, 0))
+
+        name = getattr(self.member, "nick", None) or self.member.global_name
+
+        async with self.db.connect() as conn:
+            # Fetch the user from the database
+            user = await get_user(self.member, conn)
+            if user is None:
+                # The user hasn't been added yet, just ignore
+                return
+
+            # Get active events and filter
+            events = await get_active_events_for(user, conn)
+
+            try:
+                event = next(e for e in events if e.room.channel.id == self.channel.id)
+            except StopIteration:
+                # Nothing to do, user left event
+                return
+
+            if not event.status == EventStatus.LFG:
+                # Nothing to do, event is no longer LFG
+                return
+
+            await event.preload_participants(conn)
+
+            await event.leave(user, conn)
+            await conn.commit()
+
+            player_count = len(event.get_participants())
+
+            await self.channel.send(
+                f"{name} has dropped from the mogi due to inactivity -- {player_count} players",
+            )
+
+
+class ActivityTracker:
+    db: AsyncEngine
+    client: discord.Client
+
+    users: Dict[Tuple[int, int], UserActivity]
+
+    def __init__(self, db: AsyncEngine, client: discord.Client):
+        self.db = db
+        self.client = client
+
+        self.users = {}
+
+    async def _process(self, channel: discord.TextChannel, member: discord.Member):
+        # Find activity of user
+        if (channel.id, member.id) not in self.users:
+            self.users[(channel.id, member.id)] = UserActivity(self.db, self.client, channel, member)
+
+        activity = self.users[(channel.id, member.id)]
+        await activity.touch(member=member)
+
+    async def on_message(self, message: discord.Message):
+        if not isinstance(message.channel, discord.TextChannel):
+            return
+        if not isinstance(message.author, discord.Member):
+            return
+
+        if message.author.bot:
+            return
+
+        await self._process(message.channel, message.author)
+
+    async def on_interaction(self, interaction: discord.Interaction):
+        if not isinstance(interaction.channel, discord.TextChannel):
+            return
+        if not isinstance(interaction.user, discord.Member):
+            return
+
+        if interaction.user.bot:
+            return
+
+        await self._process(interaction.channel, interaction.user)
 
 
 async def start_event(config: Config, client: discord.Client, db: AsyncEngine, event: Event, conn: AsyncConnection) -> None:
@@ -161,7 +345,7 @@ class VoteEntry(ui.Section):
         self.format = format
         self.votes = []
 
-        self.anonymized = True
+        self.anonymized = anonymized
         self._disabled = disabled
         self.quality = quality
         self.votes_needed = votes_needed
@@ -379,21 +563,31 @@ class QueueModule(Module):
     config: Config
     db: AsyncEngine
 
+    activity: ActivityTracker
+
     command_can: Optional[app_commands.AppCommand]
     command_drop: Optional[app_commands.AppCommand]
 
-    def __init__(self, config: Config, db: AsyncEngine):
+    def __init__(self, config: Config, client: discord.Client, db: AsyncEngine):
         self.config = config
         self.db = db
+
+        self.activity = ActivityTracker(db, client)
 
         self.command_can = None
         self.command_drop = None
 
-    async def on_setup(self, tree: app_commands.CommandTree) -> None:
+    async def on_setup(self, tree: app_commands.CommandTree):
         commands = await tree.fetch_commands()
 
         self.command_drop = next(c for c in commands if c.name == "d")
         self.command_can = next(c for c in commands if c.name == "c")
+
+    async def on_message(self, message: discord.Message):
+        await self.activity.on_message(message)
+
+    async def on_interaction(self, interaction: discord.Interaction):
+        await self.activity.on_interaction(interaction)
 
     @app_commands.command(name="c", description="Queue into the mogi")
     async def can(self, interaction: discord.Interaction):
