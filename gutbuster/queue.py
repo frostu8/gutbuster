@@ -302,6 +302,21 @@ async def start_event(config: Config, client: discord.Client, db: AsyncEngine, e
         await other_channel.send(content, allowed_mentions=AllowedMentions.none())
 
 
+class VoteButton(ui.Button):
+    format: EventFormat
+    func: Callable[[discord.Interaction, EventFormat], Awaitable[Any]]
+
+    def __init__(self, format: EventFormat, func: Callable[[discord.Interaction, EventFormat], Awaitable[Any]], *, disabled: bool = False):
+        super().__init__(
+            style=ButtonStyle.blurple, label="Vote", disabled=disabled
+        )
+        self.format = format
+        self.func = func
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.func(interaction, self.format)
+
+
 class VoteEntry(ui.Section):
     """
     A format with a list of votes.
@@ -329,17 +344,7 @@ class VoteEntry(ui.Section):
         quality: float = 1.0,
         votes_needed: int = 4,
     ):
-        # Generate a button for each format
-        class VoteButton(ui.Button):
-            def __init__(self, *, disabled: bool = False):
-                super().__init__(
-                    style=ButtonStyle.blurple, label="Vote", disabled=disabled
-                )
-
-            async def callback(self, interaction: discord.Interaction):
-                await func(interaction, format)
-
-        super().__init__(accessory=VoteButton(disabled=disabled))
+        super().__init__(accessory=VoteButton(format, func, disabled=disabled))
         self.db = db
         self.format = format
         self.votes = []
@@ -359,11 +364,12 @@ class VoteEntry(ui.Section):
     def disabled(self, value: bool):
         self._disabled = value
 
-        if self.accessory is ui.Button:
+        if isinstance(self.accessory, VoteButton):
             self.accessory.disabled = self._disabled
 
     def regenerate(self):
-        label = f"**{self.format.name}** Quality: `{self.quality:.3f}`"
+        #label = f"**{self.format.name}** Quality: `{self.quality:.3f}`"
+        label = f"**{self.format.name}**"
 
         if self.anonymized:
             for i in range(self.votes_needed):
@@ -462,12 +468,12 @@ class VoteView(ui.LayoutView):
 
         if self.selected_format is None:
             header += (
-                f"\n\nMogi `{self.event.short_id}` has gathered. Vote for a format."
+                f"\n\nMogi has gathered. Vote for a format."
                 f" Voting ends when a format gets 4 votes, or <t:{math.trunc(self.timeout_time.timestamp())}:R>"
             )
         else:
             header += (
-                f"\n\nMogi `{self.event.short_id}` has gathered."
+                f"\n\nMogi has gathered."
                 f" Voting concluded. **Format {self.selected_format.name} selected!**"
             )
 
