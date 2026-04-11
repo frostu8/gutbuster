@@ -175,12 +175,12 @@ class VoteView(ui.LayoutView):
         if self.selected_format is None:
             header += (
                 f"\n\nMogi has gathered. Vote for a format."
-                f" Voting ends when a format gets 4 votes, or <t:{math.trunc(self.timeout_time.timestamp())}:R>"
+                f"\nVoting ends when a format gets 4 votes, or <t:{math.trunc(self.timeout_time.timestamp())}:R>"
             )
         else:
             header += (
                 f"\n\nMogi has gathered."
-                f" Voting concluded. **Format {self.selected_format.name} selected!**"
+                f"\nVoting concluded. **Format {self.selected_format.name} selected!**"
             )
 
         # update container
