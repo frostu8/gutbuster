@@ -1,3 +1,4 @@
+from gutbuster.sticky import StickyModule
 from gutbuster.queue import QueueModule
 from gutbuster.app import App
 from gutbuster.model import (
@@ -44,11 +45,13 @@ watcher = ServerWatcher(db)
 
 intents = discord.Intents.default()
 app = App(intents=intents)
-app.db = db # TODO: Not do this.
 
 # Load room commands
+sticky = StickyModule()
+app.add_module(sticky)
+
 app.add_module(RoomModule(db))
-app.add_module(QueueModule(config, watcher, app, db))
+app.add_module(QueueModule(config, watcher, app, db, sticky.server))
 app.add_module(ServersModule(config, db, watcher))
 
 

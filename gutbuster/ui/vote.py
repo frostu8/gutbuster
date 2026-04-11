@@ -1,3 +1,4 @@
+from gutbuster.sticky import StickyServer
 from gutbuster.servers import ServerWatcher
 from gutbuster.config import Config
 import random
@@ -122,6 +123,7 @@ class VoteView(ui.LayoutView):
     config: Config
     watcher: ServerWatcher
     db: AsyncEngine
+    sticky_server: StickyServer
 
     container: VoteContainer = VoteContainer()
 
@@ -139,6 +141,7 @@ class VoteView(ui.LayoutView):
         config: Config,
         watcher: ServerWatcher,
         db: AsyncEngine,
+        sticky_server: StickyServer,
         event: Event,
         *,
         timeout: int | float = 120.0,
@@ -150,6 +153,7 @@ class VoteView(ui.LayoutView):
         self.config = config
         self.watcher = watcher
         self.db = db
+        self.sticky_server = sticky_server
         self.flavor_text = flavor
 
         self.message = None
@@ -245,7 +249,7 @@ class VoteView(ui.LayoutView):
             # Send new view
             sticky = QueueStatus(self.client, self.config, self.event, self.watcher)
             assert isinstance(self.message.channel, discord.TextChannel)
-            await sticky.send(self.message.channel)
+            self.sticky_server.stick(self.message.channel, view=sticky, allowed_mentions=AllowedMentions.none())
 
     async def on_timeout(self) -> None:
         await self.close_vote()

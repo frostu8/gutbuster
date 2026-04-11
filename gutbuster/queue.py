@@ -1,3 +1,4 @@
+from gutbuster.sticky import StickyServer
 from gutbuster.ui import VoteView
 from math import floor, ceil
 from dataclasses import dataclass
@@ -220,6 +221,7 @@ async def start_event(
     watcher: ServerWatcher,
     client: discord.Client,
     db: AsyncEngine,
+    sticky_server: StickyServer,
     event: Event,
     conn: AsyncConnection,
 ) -> None:
@@ -252,6 +254,7 @@ async def start_event(
         config,
         watcher,
         db,
+        sticky_server,
         event,
         flavor=random_message,
         timeout=120,
@@ -323,16 +326,18 @@ class QueueModule(Module):
     config: Config
     watcher: ServerWatcher
     db: AsyncEngine
+    sticky_server: StickyServer
 
     activity: ActivityTracker
 
     command_can: Optional[app_commands.AppCommand]
     command_drop: Optional[app_commands.AppCommand]
 
-    def __init__(self, config: Config, watcher: ServerWatcher, client: discord.Client, db: AsyncEngine):
+    def __init__(self, config: Config, watcher: ServerWatcher, client: discord.Client, db: AsyncEngine, sticky_server: StickyServer):
         self.config = config
         self.watcher = watcher
         self.db = db
+        self.sticky_server = sticky_server
 
         self.activity = ActivityTracker(db, client)
 
@@ -413,7 +418,7 @@ class QueueModule(Module):
                 event.status == EventStatus.LFG
                 and len(event.get_participants()) >= room.players_required
             ):
-                await start_event(self.config, self.watcher, interaction.client, self.db, event, conn)
+                await start_event(self.config, self.watcher, interaction.client, self.db, self.sticky_server, event, conn)
 
             await conn.commit()
 

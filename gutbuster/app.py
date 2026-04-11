@@ -146,8 +146,6 @@ class App(discord.Client):
     user: discord.ClientUser
     tree: app_commands.CommandTree
 
-    db: AsyncEngine
-
     modules: List[Module]
 
     def __init__(self, *, intents: discord.Intents):
@@ -162,9 +160,6 @@ class App(discord.Client):
         self.modules.append(module)
 
     async def setup_hook(self) -> None:
-        # Connects to a database.
-        # self.db = create_async_engine("sqlite+aiosqlite:///dev_gutbuster.sqlite")
-
         # Registers all modules.
         for module in self.modules:
             if module.__is_app_command_group__:

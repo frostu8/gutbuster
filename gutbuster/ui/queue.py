@@ -1,3 +1,4 @@
+from gutbuster.sticky import StickyView
 import math
 from datetime import datetime, timezone
 from copy import copy
@@ -126,7 +127,7 @@ class QueueStatusContainer(ui.Container):
             await self.server.update_event.wait()
 
 
-class QueueStatus(ui.LayoutView):
+class QueueStatus(StickyView):
     """
     A sticky message that reports status on the queues.
     """
@@ -136,8 +137,7 @@ class QueueStatus(ui.LayoutView):
     container: QueueStatusContainer
 
     client: discord.Client
-    message: Optional[discord.Message]
-    _task: Optional[Task[None]]
+    _realtime_task: Optional[Task[None]]
 
     def __init__(self, client: discord.Client, config: Config, event: Event, servers: ServerWatcher, *, timeout: Optional[int | float] = 60*60):
         super().__init__(timeout=timeout)
@@ -155,21 +155,7 @@ class QueueStatus(ui.LayoutView):
 
         self.client = client
         self.message = None
-        self._task = None
-
-    async def send(self, channel: discord.TextChannel):
-        """
-        Sends the status view into a channel.
-        """
-
-        # Cache all users
-        for participant in self.container.event.get_participants():
-            await participant.user.fetch_user(self.client)
-
-        self.container.regenerate()
-        self.message = await channel.send(view=self, allowed_mentions=AllowedMentions.none())
-        if self.has_realtime():
-            self.realtime()
+        self._realtime_task = None
 
     async def _realtime(self) -> None:
         while True:
@@ -193,9 +179,21 @@ class QueueStatus(ui.LayoutView):
         Creates a task that refreshes the server listing periodically.
         """
 
-        self._task = asyncio.create_task(self._realtime())
+        self._realtime_task = asyncio.create_task(self._realtime())
+
+    async def on_refresh(self) -> None:
+        if self._realtime_task is not None:
+            self._realtime_task.cancel()
+
+        # Cache all users
+        for participant in self.container.event.get_participants():
+            await participant.user.fetch_user(self.client)
+
+        self.container.regenerate()
+        if self.has_realtime():
+            self.realtime()
 
     async def on_timeout(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
+        if self._realtime_task is not None:
+            self._realtime_task.cancel()
             
