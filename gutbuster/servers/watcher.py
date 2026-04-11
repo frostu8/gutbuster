@@ -4,58 +4,38 @@ from typing import List, Dict, Optional, Generator, Tuple
 from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncConnection
+from gutbuster.model import Server as SavedServer, create_server, get_all_servers
 import discord
 import asyncio
 
 
 class WatchedServer(Server):
-    id: int
-    discord_guild_id: int
-    inserted_at: datetime
-    updated_at: datetime
+    inner: SavedServer
 
     last_updated: Optional[datetime]
     update_event: asyncio.Event
 
-    def __init__(
-        self,
-        remote: str,
-        *,
-        id: int,
-        discord_guild_id: int,
-        label: Optional[str] = None,
-        inserted_at: datetime,
-        updated_at: datetime,
-    ):
-        super().__init__(remote, label=label)
+    def __init__(self, inner: SavedServer):
+        super().__init__(inner.remote, label=inner.label)
 
-        self.id = id
-        self.discord_guild_id = discord_guild_id
-        self.inserted_at = inserted_at
-        self.updated_at = updated_at
+        self.inner = inner
 
         self.last_updated = None
         self.update_event = asyncio.Event()
 
-    async def update_label(self, label: str, conn: AsyncConnection) -> None:
-        """
-        Updates the server label.
-        """
+    @property
+    def id(self):
+        return self.inner.id
 
-        self.label = label
+    @property
+    def discord_guild_id(self):
+        return self.inner.discord_guild_id
 
-        now = datetime.now()
-        await conn.execute(
-            text("""
-            UPDATE server
-            SET label = :label, updated_at = :now
-            WHERE id = :id
-            """),
-            {"id": self.id, "label": label, "now": now.isoformat()}
-        )
+    async def set_label(self, label: str, conn: AsyncConnection) -> None:
+        await self.inner.set_label(label, conn)
 
-    async def knock(self) -> Tuple[ServerInfo, List[PlayerInfo]]:
-        res = await super().knock()
+    async def knock(self, *, timeout: int | float = 5) -> Tuple[ServerInfo, List[PlayerInfo]]:
+        res = await super().knock(timeout=timeout)
         self.last_updated = datetime.now(timezone.utc)
 
         # Notify waiting tasks
@@ -108,38 +88,11 @@ class ServerWatcher:
         Adds a new server to the watcher.
         """
 
-        now = datetime.now()
-        row = None
-
         async with self.db.connect() as conn:
-            res = await conn.execute(
-                text("""
-                INSERT INTO server (discord_guild_id, remote, label, inserted_at, updated_at)
-                VALUES (:guild_id, :remote, :label, :now, :now)
-                RETURNING id
-                """),
-                {
-                    "guild_id": guild.id,
-                    "remote": remote,
-                    "label": label,
-                    "now": now.isoformat(),
-                },
-            )
-
-            row = res.first()
-            if row is None:
-                raise ValueError("Failed to get generated id of row")
-
+            db_server = await create_server(guild, remote, conn, label=label)
             await conn.commit()
 
-        server = WatchedServer(
-            id=row.id,
-            discord_guild_id=guild.id,
-            remote=remote,
-            label=label,
-            inserted_at=now,
-            updated_at=now,
-        )
+        server = WatchedServer(inner=db_server)
         self._append(server)
         return server
 
@@ -164,18 +117,16 @@ class ServerWatcher:
         Removes a server from the watcher.
         """
 
+        try:
+            server = self.servers.pop(server.id)
+        except KeyError:
+            raise ValueError(f"Server {server.remote} not found.")
+
         async with self.db.connect() as conn:
-            _res = await conn.execute(
-                text("""
-                DELETE FROM server
-                WHERE id = :id
-                """),
-                {"id": server.id},
-            )
+            await server.inner.delete(conn)
             await conn.commit()
 
-        self.servers.pop(server.id)
-
+        # Remove from guild list
         if server.discord_guild_id in self.servers_by_guild:
             servers = self.servers_by_guild[server.discord_guild_id]
             servers.remove(server)
@@ -186,20 +137,8 @@ class ServerWatcher:
         """
 
         async with self.db.connect() as conn:
-            res = await conn.execute(
-                text("""
-                SELECT id, discord_guild_id, remote, label, inserted_at, updated_at
-                FROM server
-                """)
-            )
+            servers = await get_all_servers(conn)
 
-        for row in res:
-            server = WatchedServer(
-                id=row.id,
-                discord_guild_id=row.discord_guild_id,
-                remote=row.remote,
-                label=row.label,
-                inserted_at=datetime.fromisoformat(row.inserted_at),
-                updated_at=datetime.fromisoformat(row.updated_at),
-            )
+        for db_server in servers:
+            server = WatchedServer(db_server)
             self._append(server)

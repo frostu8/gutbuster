@@ -215,7 +215,14 @@ class ActivityTracker:
         await self._process(interaction.channel, interaction.user)
 
 
-async def start_event(config: Config, client: discord.Client, db: AsyncEngine, event: Event, conn: AsyncConnection) -> None:
+async def start_event(
+    config: Config,
+    watcher: ServerWatcher,
+    client: discord.Client,
+    db: AsyncEngine,
+    event: Event,
+    conn: AsyncConnection,
+) -> None:
     """
     Starts an event, notifying all waiting players.
     """
@@ -241,6 +248,9 @@ async def start_event(config: Config, client: discord.Client, db: AsyncEngine, e
         random_message = random.choice(config.messages.gathered)
 
     view = VoteView(
+        client,
+        config,
+        watcher,
         db,
         event,
         flavor=random_message,
@@ -311,6 +321,7 @@ class QueueModule(Module):
     """
 
     config: Config
+    watcher: ServerWatcher
     db: AsyncEngine
 
     activity: ActivityTracker
@@ -318,8 +329,9 @@ class QueueModule(Module):
     command_can: Optional[app_commands.AppCommand]
     command_drop: Optional[app_commands.AppCommand]
 
-    def __init__(self, config: Config, client: discord.Client, db: AsyncEngine):
+    def __init__(self, config: Config, watcher: ServerWatcher, client: discord.Client, db: AsyncEngine):
         self.config = config
+        self.watcher = watcher
         self.db = db
 
         self.activity = ActivityTracker(db, client)
@@ -401,7 +413,7 @@ class QueueModule(Module):
                 event.status == EventStatus.LFG
                 and len(event.get_participants()) >= room.players_required
             ):
-                await start_event(self.config, interaction.client, self.db, event, conn)
+                await start_event(self.config, self.watcher, interaction.client, self.db, event, conn)
 
             await conn.commit()
 
@@ -652,7 +664,8 @@ class QueueModule(Module):
             await conn.commit()
 
             await interaction.response.send_message(
-                f"Mogi `{event.short_id}` has ended.\nJoin a new queue with </c:{self.command_can.id}>!",
+                f"Mogi has been closed by {interaction.user.mention}."
+                f"\nJoin a new queue with </c:{self.command_can.id}>!",
             )
 
 

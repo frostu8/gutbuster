@@ -1,3 +1,5 @@
+from gutbuster.servers import ServerWatcher
+from gutbuster.config import Config
 import random
 import math
 from datetime import datetime, timedelta
@@ -6,6 +8,7 @@ from typing import Callable, Awaitable, Any, List, Optional
 from gutbuster.model import EventFormat, User, Event, get_event, get_user
 from discord import ui, ButtonStyle, AllowedMentions
 import discord
+from .queue import QueueStatus
 
 
 class VoteButton(ui.Button):
@@ -28,6 +31,7 @@ class VoteEntry(ui.Section):
     A format with a list of votes.
     """
 
+    client: discord.Client
     db: AsyncEngine
 
     format: EventFormat
@@ -41,6 +45,7 @@ class VoteEntry(ui.Section):
 
     def __init__(
         self,
+        client: discord.Client,
         db: AsyncEngine,
         format: EventFormat,
         func: Callable[[discord.Interaction, EventFormat], Awaitable[Any]],
@@ -51,6 +56,7 @@ class VoteEntry(ui.Section):
         votes_needed: int = 4,
     ):
         super().__init__(accessory=VoteButton(format, func, disabled=disabled))
+        self.client = client
         self.db = db
         self.format = format
         self.votes = []
@@ -112,6 +118,9 @@ class VoteView(ui.LayoutView):
     A view that allows players to vote for their favorite format!
     """
 
+    client: discord.Client
+    config: Config
+    watcher: ServerWatcher
     db: AsyncEngine
 
     container: VoteContainer = VoteContainer()
@@ -126,6 +135,9 @@ class VoteView(ui.LayoutView):
 
     def __init__(
         self,
+        client: discord.Client,
+        config: Config,
+        watcher: ServerWatcher,
         db: AsyncEngine,
         event: Event,
         *,
@@ -134,6 +146,9 @@ class VoteView(ui.LayoutView):
         votes_needed: int = 4,
     ):
         super().__init__(timeout=timeout)
+        self.client = client
+        self.config = config
+        self.watcher = watcher
         self.db = db
         self.flavor_text = flavor
 
@@ -144,7 +159,7 @@ class VoteView(ui.LayoutView):
         self.timeout_time = datetime.now() + timedelta(seconds=timeout)
 
         for _, format in enumerate(event.room.formats):
-            view = VoteEntry(self.db, format, self.vote, votes_needed=self.votes_needed)
+            view = VoteEntry(self.client, self.db, format, self.vote, votes_needed=self.votes_needed)
             self.formats.append(view)
             self.container.add_item(view)
 
@@ -215,11 +230,22 @@ class VoteView(ui.LayoutView):
             # In case the event was updated while we were waiting for voting
             self.event = await get_event(self.event.id, conn)
             await self.event.set_format(self.selected_format, conn)
+
+            # Find server for queue
+            server = await self.selected_format.find_server(conn)
+            if server is not None:
+                await self.event.set_remote(server.remote, conn)
+
             await conn.commit()
 
         # Update the message
         if self.message is not None:
             await self.message.edit(allowed_mentions=self.allowed_mentions(), view=self)
+
+            # Send new view
+            sticky = QueueStatus(self.client, self.config, self.event, self.watcher)
+            assert isinstance(self.message.channel, discord.TextChannel)
+            await sticky.send(self.message.channel)
 
     async def on_timeout(self) -> None:
         await self.close_vote()

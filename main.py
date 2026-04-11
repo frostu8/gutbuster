@@ -48,7 +48,7 @@ app.db = db # TODO: Not do this.
 
 # Load room commands
 app.add_module(RoomModule(db))
-app.add_module(QueueModule(config, app, db))
+app.add_module(QueueModule(config, watcher, app, db))
 app.add_module(ServersModule(config, db, watcher))
 
 

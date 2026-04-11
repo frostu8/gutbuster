@@ -53,7 +53,7 @@ CREATE TABLE event_format (
     name VARCHAR(255) NOT NULL,
     -- Team balancing mode of the format
     -- 0 - FFA
-    -- 1 - Half v Half
+    -- 1 - 2 Teams
     -- 2 - Quarter v Quarter v Quarter v Quarter
     team_mode INTEGER NOT NULL DEFAULT 0,
 
@@ -84,6 +84,10 @@ CREATE TABLE event (
     -- May be NULL if the mogi's format hasn't been formatted or randomly
     -- selected.
     format_id INTEGER REFERENCES event_format(id),
+    -- The remote for the mogi.
+    -- May be NULL if the mogi hasn't been started.
+    -- Does NOT have to exist in the servers list.
+    remote VARCHAR(255),
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );

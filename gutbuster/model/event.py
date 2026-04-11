@@ -56,6 +56,7 @@ class Event(object):
     participants: Optional[List[Participant]] = field(default=None)
     status: EventStatus = field(default=EventStatus.LFG)
     format: Optional[EventFormat] = field(default=None)
+    remote: Optional[str] = field(default=None)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
 
@@ -188,6 +189,23 @@ class Event(object):
 
         self.format = format
 
+    async def set_remote(self, remote: str, conn: AsyncConnection) -> None:
+        """
+        Sets the event's remote server.
+        """
+
+        now = datetime.datetime.now()
+        await conn.execute(
+            text("""
+            UPDATE event
+            SET remote = :remote, updated_at = :now
+            WHERE id = :event_id
+            """),
+            {"event_id": self.id, "now": now.isoformat(), "remote": remote},
+        )
+
+        self.remote = remote
+
     async def join(self, user: User, conn: AsyncConnection) -> Participant:
         """
         Adds a participant to an event.
@@ -250,8 +268,6 @@ class Event(object):
     async def delete(self, conn: AsyncConnection) -> None:
         """
         Deletes an event.
-
-        The event is now invalidated after this call.
         """
 
         await conn.execute(
@@ -378,6 +394,7 @@ async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[E
             room=room,
             status=EventStatus(row.status),
             format=format,
+            remote=row.remote,
             inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
             updated_at=datetime.datetime.fromisoformat(row.updated_at),
         )
@@ -444,6 +461,7 @@ async def get_active_events(guild_id: int, conn: AsyncConnection) -> Sequence[Ev
             room=room,
             status=EventStatus(row.status),
             format=format,
+            remote=row.remote,
             inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
             updated_at=datetime.datetime.fromisoformat(row.updated_at),
         )
@@ -461,8 +479,11 @@ async def get_event(id: int, conn: AsyncConnection) -> Event:
 
     res = await conn.execute(
         text("""
-        SELECT e.id, e.short_id, e.status, e.inserted_at, e.updated_at, r.discord_channel_id
+        SELECT e.*, r.discord_channel_id, f.name AS format_name
         FROM event e, room r
+        LEFT OUTER JOIN
+            event_format f
+        ON e.format_id = f.id
         WHERE
             e.room_id = r.id
             AND e.id = :id
@@ -482,11 +503,17 @@ async def get_event(id: int, conn: AsyncConnection) -> Event:
     if room is None:
         raise ValueError(f"parent room {row.discord_channel_id} does not exist")
 
+    format = None
+    if row.format_id:
+        format = EventFormat(id=row.format_id, name=row.format_name)
+
     event = Event(
         id=row.id,
         short_id=row.short_id,
         room=room,
         status=EventStatus(row.status),
+        format=format,
+        remote=row.remote,
         inserted_at=inserted_at,
         updated_at=updated_at,
     )
@@ -503,10 +530,13 @@ async def get_current_event(room: Room, conn: AsyncConnection) -> Optional[Event
 
     res = await conn.execute(
         text("""
-        SELECT id, short_id, status, inserted_at, updated_at
-        FROM event
+        SELECT e.*, f.name AS format_name
+        FROM event e
+        LEFT OUTER JOIN
+            event_format f
+        ON e.format_id = f.id
         WHERE
-            room_id = :room_id
+            e.room_id = :room_id
             AND (status = 0 OR status = 1)
         ORDER BY inserted_at DESC
         LIMIT 1
@@ -518,6 +548,10 @@ async def get_current_event(room: Room, conn: AsyncConnection) -> Optional[Event
     if row is None:
         return None
 
+    format = None
+    if row.format_id:
+        format = EventFormat(id=row.format_id, name=row.format_name)
+
     inserted_at = datetime.datetime.fromisoformat(row.inserted_at)
     updated_at = datetime.datetime.fromisoformat(row.updated_at)
 
@@ -526,6 +560,8 @@ async def get_current_event(room: Room, conn: AsyncConnection) -> Optional[Event
         short_id=row.short_id,
         room=room,
         status=EventStatus(row.status),
+        format=format,
+        remote=row.remote,
         inserted_at=inserted_at,
         updated_at=updated_at,
     )

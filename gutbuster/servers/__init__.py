@@ -1,3 +1,4 @@
+from asyncio import Task
 from .server import Server, ConnectError
 from .packet import (
     ServerInfo,
@@ -38,7 +39,7 @@ __all__ = [
 
 class ServerContainer(ui.Container):
     server: WatchedServer
-    header: ui.TextDisplay
+    header: ui.TextDisplay = ui.TextDisplay(content="")
 
     _task: Optional[asyncio.Task]
 
@@ -79,7 +80,7 @@ class ServerContainer(ui.Container):
 
             content += "🔴 Server is offline."
 
-            self.header = ui.TextDisplay(content)
+            self.header.content = content
             self.add_item(self.header)
         else:
             # Generate content
@@ -88,7 +89,7 @@ class ServerContainer(ui.Container):
                 content += f"## {self.server.label}\n"
 
             content += f"🟢 **IP** `{self.server.ip}:{self.server.port}`"
-            self.header = ui.TextDisplay(content)
+            self.header.content = content
 
             self.add_item(self.header)
             self.add_item(ui.Separator(spacing=SeparatorSpacing.large))
@@ -139,6 +140,8 @@ class ServersView(ui.LayoutView):
     message: Optional[discord.Message]
     containers: List[ServerContainer]
 
+    _task: Optional[Task[None]]
+
     def __init__(self, config: Config, *servers: WatchedServer, timeout: Optional[int | float] = 1800):
         super().__init__(timeout=timeout)
 
@@ -148,6 +151,8 @@ class ServersView(ui.LayoutView):
             container = ServerContainer(config, server)
             self.containers.append(container)
             self.add_item(container)
+
+        self._task = None
 
     async def _realtime(self) -> None:
         while True:
@@ -231,7 +236,7 @@ class ServersModule(
         if server.server_name is not None:
             async with self.db.connect() as conn:
                 try:
-                    await server.update_label(server.server_name, conn)
+                    await server.set_label(server.server_name, conn)
                     await conn.commit()
                 except IntegrityError:
                     pass

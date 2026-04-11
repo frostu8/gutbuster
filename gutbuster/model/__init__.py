@@ -10,9 +10,13 @@ from .event import (
     get_current_event,
     get_active_events_for,
 )
+from .server import (
+    Server,
+    create_server,
+    get_all_servers
+)
 
 __all__ = [
-    "Rating",
     "User",
     "get_or_create_user",
     "get_user",
@@ -29,4 +33,7 @@ __all__ = [
     "get_current_event",
     "get_active_events",
     "get_active_events_for",
+    "Server",
+    "create_server",
+    "get_all_servers",
 ]
