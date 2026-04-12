@@ -116,8 +116,9 @@ class Room(object):
     players_required: int = field(default=8)
     format_selection_mode: FormatSelectMode = field(default=FormatSelectMode.VOTE)
     votes_required: int = field(default=4)
-    inactivity_warning_after: int = field(default=900)
-    inactivity_drop_after: int = field(default=1500)
+    # TODO add to config
+    inactivity_warning_after: int = field(default=1500)
+    inactivity_drop_after: int = field(default=2100)
     formats: List[EventFormat] = field(default_factory=lambda: [])
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
