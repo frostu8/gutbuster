@@ -636,6 +636,8 @@ class QueueModule(Module):
             # Ignore any user commands
             raise ValueError("Command not being called in a guild context?")
 
+        name = getattr(interaction.user, "nick", None) or interaction.user.global_name
+
         async with self.db.connect() as conn:
             # Find the room
             room = await get_room(interaction.channel, conn)
@@ -648,7 +650,7 @@ class QueueModule(Module):
 
             # Get the currently active event
             event = await get_current_event(room, conn)
-            if event is None or event.status == EventStatus.LFG:
+            if event is None:
                 await interaction.response.send_message(
                     "A mogi hasn't started yet!",
                     ephemeral=True,
@@ -668,10 +670,10 @@ class QueueModule(Module):
             await event.set_status(EventStatus.ENDED, conn)
             await conn.commit()
 
-            await interaction.response.send_message(
-                f"Mogi has been closed by {interaction.user.mention}."
-                f"\nJoin a new queue with </c:{self.command_can.id}>!",
-            )
+        await interaction.response.send_message(
+            f"Mogi has been ended by {name}."
+            f"\nJoin a new queue with </c:{self.command_can.id}>!",
+        )
 
 
     @app_commands.command(name="end", description="Ends the current mogi")
