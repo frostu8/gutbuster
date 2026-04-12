@@ -323,6 +323,7 @@ class FormatVote(ui.LayoutView):
             view = QueueStatus(self.client, self.db, self.config, self.event, self.watcher)
             assert isinstance(self.message.channel, discord.TextChannel)
 
+            await view.update()
             await self.message.channel.send(
                 view=view,
                 allowed_mentions=AllowedMentions.none()

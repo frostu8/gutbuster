@@ -141,8 +141,6 @@ class UserActivity:
         # waiting time
         await asyncio.sleep(max((drop_time - now).seconds, 0))
 
-        name = getattr(self.member, "nick", None) or self.member.global_name
-
         async with self.db.connect() as conn:
             # Fetch the user from the database
             user = await get_user(self.member, conn)
@@ -171,7 +169,8 @@ class UserActivity:
             player_count = len(event.get_participants())
 
             await self.channel.send(
-                f"{name} has dropped from the mogi due to inactivity -- {player_count} players",
+                f"{self.member.display_name} has dropped from the mogi"
+                f" due to inactivity -- {player_count} players",
             )
 
 
@@ -338,6 +337,7 @@ class QueueModule(Module):
             event,
             self.watcher,
         )
+        await view.update()
         await channel.send(view=view, allowed_mentions=AllowedMentions.none())
 
     async def start_event(
@@ -440,7 +440,7 @@ class QueueModule(Module):
             # Ignore any user commands
             raise ValueError("Command not being called in a guild context?")
 
-        name = getattr(interaction.user, "nick", None) or interaction.user.global_name
+        name = interaction.user.display_name
 
         async with self.db.connect() as conn:
             # Fetch the user from the database
@@ -527,7 +527,7 @@ class QueueModule(Module):
             # Ignore any user commands
             raise ValueError("Command not being called in a guild context?")
 
-        name = getattr(interaction.user, "nick", None) or interaction.user.global_name
+        name = interaction.user.display_name
 
         async with self.db.connect() as conn:
             # Fetch the user from the database
@@ -587,7 +587,7 @@ class QueueModule(Module):
             # Ignore any user commands
             raise ValueError("Command not being called in a guild context?")
 
-        name = getattr(interaction.user, "nick", None) or interaction.user.global_name
+        name = interaction.user.display_name
 
         async with self.db.connect() as conn:
             # Fetch the user from the database
@@ -742,7 +742,7 @@ class QueueModule(Module):
         member = interaction.user
         assert isinstance(member, discord.Member), "Command not run in a guild context"
 
-        name = member.nick or member.global_name
+        name = member.display_name
 
         async with self.db.connect() as conn:
             # Find the room
