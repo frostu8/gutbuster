@@ -55,7 +55,7 @@ class QueueStatusContainer(ui.Container):
             if player.assigned_team not in teams:
                 teams[player.assigned_team] = [player]
             else:
-                teams[player.assigned_team]
+                teams[player.assigned_team].append(player)
 
         return teams
 
