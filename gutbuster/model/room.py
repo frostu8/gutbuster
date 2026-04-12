@@ -165,7 +165,7 @@ class Room(object):
         if row is None:
             raise ValueError("failed to get id of new row")
 
-        format = EventFormat(row.id, name=row.name, team_mode=team_mode)
+        format = EventFormat(row.id, name=name, team_mode=team_mode)
         self.formats.append(format)
         return format
 

@@ -199,6 +199,24 @@ class Event(object):
 
         return any(p.user.id == user.id for p in self.participants)
 
+    def is_user_playing(self, user: User) -> bool:
+        """
+        Checks if a user is playing in this event.
+
+        A user is playing in an event if they have been assigned a team.
+
+        Raises `ValueError` if the participants are not preloaded.
+        """
+
+        if self.participants is None:
+            raise ValueError("participants not preloaded")
+
+        try:
+            player = next(p for p in self.participants if p.user.id == user.id)
+            return player.assigned_team is not None
+        except StopIteration:
+            return False
+
     def is_active(self) -> bool:
         """
         Checks if the event is active

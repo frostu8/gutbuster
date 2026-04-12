@@ -464,6 +464,26 @@ class QueueModule(Module):
                 )
                 return
 
+            # If the player is already assigned a team in a started mogi, they
+            # shouldn't be able to join another
+            active_events = await get_active_events_for(user, conn)
+            for event in active_events:
+                await event.preload_participants(conn)
+
+                if event.is_user_playing(user):
+                    channel = event.room.channel
+                    if isinstance(channel, discord.Object):
+                        channel = interaction.client.get_channel(channel.id)
+
+                    assert isinstance(channel, discord.TextChannel), "Mogi in a non-guild context"
+
+                    await interaction.response.send_message(
+                        f"{name}, you are already playing in another queue."
+                        f"\nYou must wait until the mogi in {channel.mention} has ended to can here.",
+                        ephemeral=True,
+                    )
+                    return
+
             # Get the currently active event
             event = await get_current_event(room, conn)
             if event is None:
@@ -531,6 +551,15 @@ class QueueModule(Module):
                     ephemeral=True,
                 )
             else:
+                if event.is_user_playing(user):
+                    # The player has already been assigned a team. They
+                    # shouldn't be able to /d
+                    await interaction.response.send_message(
+                        f"{name}, you are playing in this queue.\nYou must wait until the current mogi has ended.",
+                        ephemeral=True,
+                    )
+                    return
+
                 await event.leave(user, conn)
 
                 player_count = len(event.get_participants())
