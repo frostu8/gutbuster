@@ -45,7 +45,7 @@ class FormatSelectorContainer(ui.Container):
 
         content += (
             f"\n\nMogi has gathered."
-            f"\nThe wheel has sealed your fate. **Format {self.format.name} selected!**"
+            f"\nThe wheel has sealed your fate. **Format __{self.format.name}__ selected!**"
         )
 
         # update container
@@ -270,7 +270,7 @@ class FormatVote(ui.LayoutView):
         else:
             header += (
                 f"\n\nMogi has gathered."
-                f"\nVoting concluded. **Format {self.selected_format.name} selected!**"
+                f"\nVoting concluded. **Format __{self.selected_format.name}__ selected!**"
             )
 
         # update container
