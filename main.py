@@ -1,35 +1,16 @@
-from gutbuster.sticky import StickyModule
-from gutbuster.queue import QueueModule
-from gutbuster.app import App
-from gutbuster.model import (
-    get_or_create_user,
-    get_user,
-    User,
-    get_room,
-    EventFormat,
-    create_event,
-    EventStatus,
-    Event,
-    get_event,
-    get_active_events_for,
-)
-from gutbuster.room import RoomModule
-from gutbuster.config import load as load_config
-from gutbuster.servers import ServerWatcher, ServersModule
-
-from dotenv import load_dotenv
-from typing import List, Callable, Awaitable, Any, Optional, Dict
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
-import discord
-from discord import AllowedMentions, ButtonStyle, ui
-from discord.app_commands import default_permissions
-from datetime import datetime, timedelta
-import math
-import random
-import logging
-import os
 import sys
+import os
+from gutbuster.queue import QueueModule
+from gutbuster.room import RoomModule
+from gutbuster.sticky import StickyModule
+from gutbuster.app import App
+import discord
+from gutbuster.servers import ServerWatcher
+from sqlalchemy.ext.asyncio import create_async_engine
+from dotenv import load_dotenv
+import logging
+from gutbuster.config import load as load_config
+from gutbuster.servers import ServersModule
 
 logger = logging.getLogger(__name__)
 
