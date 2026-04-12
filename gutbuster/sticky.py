@@ -124,8 +124,11 @@ class StickyServer:
 class StickyModule(Module):
     server: StickyServer
 
-    def __init__(self):
-        self.server = StickyServer()
+    def __init__(self, server: Optional[StickyServer] = None):
+        if server:
+            self.server = server
+        else:
+            self.server = StickyServer()
 
     async def on_message(self, message: discord.Message) -> None:
         await self.server.on_message(message)

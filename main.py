@@ -2,7 +2,7 @@ import sys
 import os
 from gutbuster.queue import QueueModule
 from gutbuster.room import RoomModule
-from gutbuster.sticky import StickyModule
+from gutbuster.sticky import StickyModule, StickyServer
 from gutbuster.app import App
 import discord
 from gutbuster.servers import ServerWatcher
@@ -23,16 +23,15 @@ config = load_config("config.toml")
 # Load database
 db = create_async_engine("sqlite+aiosqlite:///dev_gutbuster.sqlite")
 watcher = ServerWatcher(db)
+sticky = StickyServer()
 
 intents = discord.Intents.default()
 app = App(intents=intents)
 
 # Load room commands
-sticky = StickyModule()
-app.add_module(sticky)
-
+app.add_module(StickyModule(sticky))
 app.add_module(RoomModule(db))
-app.add_module(QueueModule(config, watcher, app, db, sticky.server))
+app.add_module(QueueModule(config, watcher, app, db, sticky))
 app.add_module(ServersModule(config, db, watcher))
 
 
