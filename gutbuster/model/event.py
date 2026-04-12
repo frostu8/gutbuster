@@ -80,6 +80,33 @@ class Event(object):
         if row is not None:
             self.format = EventFormat(row.id, name=row.name)
 
+    async def refetch(self, conn: AsyncConnection) -> None:
+        """
+        Fetches any updates from the database for the event.
+        """
+
+        res = await conn.execute(
+            text("""
+            SELECT e.*
+            FROM event e
+            WHERE e.id = :id
+            """),
+            {"id": self.id}
+        )
+
+        row = res.first()
+        if row is None:
+            raise ValueError("Event no longer exists")
+
+        inserted_at = datetime.datetime.fromisoformat(row.inserted_at)
+        updated_at = datetime.datetime.fromisoformat(row.updated_at)
+
+        self.short_id = row.short_id
+        self.status = EventStatus(row.status)
+        self.remote = row.remote
+        self.inserted_at = inserted_at
+        self.updated_at = updated_at
+
     async def preload_participants(self, conn: AsyncConnection):
         """
         Preloads participants.

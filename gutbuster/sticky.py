@@ -34,7 +34,15 @@ class StickyView(ui.LayoutView):
 
         self.allowed_mentions = AllowedMentions.all()
 
-    def on_refresh(self) -> None | Awaitable[None]:
+    def stop(self) -> None:
+        super().stop()
+
+        # Clear all sticky stuff
+        if self._task is not None:
+            self._task.cancel()
+        self._event = None
+
+    async def on_refresh(self) -> None | Awaitable[None]:
         """
         Called when the view is refreshed.
         """
@@ -46,10 +54,7 @@ class StickyView(ui.LayoutView):
 
         # Initialize
         # Send the on_refresh callback
-        if inspect.iscoroutinefunction(self.on_refresh):
-            await self.on_refresh()
-        else:
-            self.on_refresh()
+        await self.on_refresh()
 
         # Send a new message
         self.message = await channel.send(view=self, allowed_mentions=self.allowed_mentions)
@@ -68,10 +73,10 @@ class StickyView(ui.LayoutView):
                     await asyncio.sleep(delta.seconds)
 
             # Send the on_refresh callback
-            if inspect.iscoroutinefunction(self.on_refresh):
-                await self.on_refresh()
-            else:
-                self.on_refresh()
+            await self.on_refresh()
+            if self.is_finished():
+                # Do not try to update the view after it is done
+                return
 
             self.last_message = datetime.now()
 

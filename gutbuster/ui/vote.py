@@ -247,7 +247,7 @@ class VoteView(ui.LayoutView):
             await self.message.edit(allowed_mentions=self.allowed_mentions(), view=self)
 
             # Send new view
-            sticky = QueueStatus(self.client, self.config, self.event, self.watcher)
+            sticky = QueueStatus(self.client, self.db, self.config, self.event, self.watcher)
             assert isinstance(self.message.channel, discord.TextChannel)
             self.sticky_server.stick(self.message.channel, view=sticky, allowed_mentions=AllowedMentions.none())
 

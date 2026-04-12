@@ -1,3 +1,4 @@
+from sqlalchemy.ext.asyncio import AsyncEngine
 from gutbuster.sticky import StickyView
 import math
 from datetime import datetime, timezone
@@ -9,14 +10,10 @@ from discord import ui, AllowedMentions, SeparatorSpacing
 from typing import Optional
 import discord
 from gutbuster.servers import WatchedServer, ServerWatcher, GameSpeed
-from gutbuster.model import Event
+from gutbuster.model import Event, EventStatus
 
 
 class QueueStatusContainer(ui.Container):
-    """
-    The discord container.
-    """
-
     config: Config
     event: Event
     server: Optional[WatchedServer]
@@ -130,48 +127,56 @@ class QueueStatusContainer(ui.Container):
 
 class QueueStatus(StickyView):
     """
-    A sticky message that reports status on the queues.
+    A sticky message that reports the current status of a Mogi queue.
     """
-
-    event: Event
 
     container: QueueStatusContainer
 
+    db: AsyncEngine
     client: discord.Client
     _realtime_task: Optional[Task[None]]
 
-    def __init__(self, client: discord.Client, config: Config, event: Event, servers: ServerWatcher, *, timeout: Optional[int | float] = 60*60):
+    def __init__(self, client: discord.Client, db: AsyncEngine, config: Config, event: Event, servers: ServerWatcher, *, timeout: Optional[int | float] = 60*60):
         super().__init__(timeout=timeout)
-        self.event = event
 
         # Find server attached to event
         guild = discord.Object(id=event.room.discord_guild_id)
         try:
-            server = next(filter(lambda s: s.remote == self.event.remote, servers.iter(guild)))
+            server = next(filter(lambda s: s.remote == event.remote, servers.iter(guild)))
         except StopIteration:
             server = None
 
         self.container = QueueStatusContainer(config, event, server=server)
         self.add_item(self.container)
 
+        self.db = db
         self.client = client
         self.message = None
         self._realtime_task = None
 
+    @property
+    def event(self) -> Event:
+        return self.container.event
+
+    @event.setter
+    def set_event(self, event: Event) -> None:
+        self.container.event = event
+        self.container.regenerate()
+
     async def _realtime(self) -> None:
         while True:
             await self.container._wait_for_update()
+            await self.update()
 
-            # Cache all users
-            for participant in self.container.event.get_participants():
-                await participant.user.fetch_user(self.client)
-
-            self.container.regenerate()
+            if self.event.status == EventStatus.ENDED:
+                self.stop()
+                return
 
             # Update message
             if self.message is not None:
                 await self.message.edit(view=self, allowed_mentions=AllowedMentions.none())
 
+    @property
     def has_realtime(self) -> bool:
         return self.container.server is not None
 
@@ -180,21 +185,40 @@ class QueueStatus(StickyView):
         Creates a task that refreshes the server listing periodically.
         """
 
+        if self._realtime_task is not None:
+            self._realtime_task.cancel()
         self._realtime_task = asyncio.create_task(self._realtime())
 
-    async def on_refresh(self) -> None:
+    async def update(self) -> None:
+        # Get new data for event
+        async with self.db.connect() as conn:
+            await self.event.refetch(conn)
+
+        # Cache all users
+        for participant in self.event.get_participants():
+            await participant.user.fetch_user(self.client)
+
+        # Regenerate
+        self.container.regenerate()
+
+    def stop(self) -> None:
+        super().stop()
         if self._realtime_task is not None:
             self._realtime_task.cancel()
 
-        # Cache all users
-        for participant in self.container.event.get_participants():
-            await participant.user.fetch_user(self.client)
+    async def on_refresh(self) -> None:
+        await super().on_refresh()
+        await self.update()
 
-        self.container.regenerate()
-        if self.has_realtime():
+        if self.event.status == EventStatus.ENDED:
+            self.stop()
+            return
+
+        if self.has_realtime:
             self.realtime()
 
     async def on_timeout(self) -> None:
+        await super().on_timeout()
         if self._realtime_task is not None:
             self._realtime_task.cancel()
-            
+           
