@@ -79,7 +79,8 @@ class QueueStatusContainer(ui.Container):
 
         # Add the server label with the format selection.
         if self.server.label is not None:
-            content += f"⚡🔌 Playing on **{self.server.label}**\n"
+            #content += f"⚡🔌 Playing on **{self.server.label}**\n"
+            content += f"⚡ Playing on **{self.server.label}**\n"
 
         if self.server.info is None:
             content += "🔴 Server is offline."
