@@ -262,6 +262,7 @@ class QueueModule(Module):
         event: Event,
         *,
         client: discord.Client,
+        conn: AsyncConnection,
         flavor_text: Optional[str] = None
     ):
         channel = event.room.channel
@@ -272,13 +273,12 @@ class QueueModule(Module):
 
         # Assign temporary teams during voting phase to let the bot know to
         # restrict the player's movement
-        async with self.db.connect() as conn:
-            participants = event.participants
-            if participants is None:
-                participants = await event.preload_participants(conn)
+        participants = event.participants
+        if participants is None:
+            participants = await event.preload_participants(conn)
 
-            for i, player in enumerate(participants):
-                await player.assign_team(i, conn)
+        for i, player in enumerate(participants):
+            await player.assign_team(i, conn)
 
         view = FormatVote(
             client,
@@ -381,7 +381,7 @@ class QueueModule(Module):
             flavor_text = random.choice(self.config.messages.gathered)
 
         if event.room.format_selection_mode == FormatSelectMode.VOTE:
-            await self.start_vote(event, client=client, flavor_text=flavor_text)
+            await self.start_vote(event, conn=conn, client=client, flavor_text=flavor_text)
         elif event.room.format_selection_mode == FormatSelectMode.RANDOM:
             await self.start_random(event, conn=conn, client=client, flavor_text=flavor_text)
 
@@ -784,13 +784,14 @@ class QueueModule(Module):
             if (
                 event.status == EventStatus.LFG
                 and not rotted
-                and member.guild_permissions.administrator
+                and not member.guild_permissions.administrator
             ):
                 await interaction.response.send_message(
-                    "The mogi queue may be cleared in"
+                    "The mogi queue may be cleared"
                     f" <t:{math.trunc(rot_time.timestamp())}:R>.",
                     ephemeral=True,
                 )
+                return
 
             # Check if the mogi has "started," but the format hasn't been
             # determined.
