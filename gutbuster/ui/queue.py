@@ -1,3 +1,4 @@
+from gutbuster.model.room import TeamMode
 from sqlalchemy.ext.asyncio import AsyncEngine
 from gutbuster.sticky import StickyView
 import math
@@ -7,10 +8,10 @@ from gutbuster.config import Config
 import asyncio
 from asyncio import Task
 from discord import ui, AllowedMentions, SeparatorSpacing
-from typing import Optional
+from typing import Optional, Dict, List
 import discord
 from gutbuster.servers import WatchedServer, ServerWatcher, GameSpeed
-from gutbuster.model import Event, EventStatus
+from gutbuster.model import Event, EventStatus, Participant
 
 
 class QueueStatusContainer(ui.Container):
@@ -41,6 +42,23 @@ class QueueStatusContainer(ui.Container):
         else:
             return self.config.colors.server_online_custom
 
+    def _sort_teams(self) -> Dict[int, List[Participant]]:
+        players = self.event.get_participants()
+
+        # Sort players into teams
+        teams: Dict[int, List[Participant]] = {}
+        for player in players:
+            # Skip subs
+            if player.assigned_team is None:
+                continue
+
+            if player.assigned_team not in teams:
+                teams[player.assigned_team] = [player]
+            else:
+                teams[player.assigned_team]
+
+        return teams
+
     def regenerate(self) -> None:
         """
         Regenerates the embed.
@@ -50,22 +68,42 @@ class QueueStatusContainer(ui.Container):
         self.accent_color = self.color()
 
         if self.event.format is not None:
-            content = f"Format __**{self.event.format.name}**__\n"
+            content = f"Format __**{self.event.format.name}**__"
         else:
             content = ""
 
         # List participants
-        # TODO: List team balancer results
-        for i, participant in enumerate(self.event.get_participants()):
-            mention = f"@{participant.user.name}"
-            if isinstance(participant.user.user, discord.User | discord.Member):
-                mention = participant.user.user.mention
+        if self.event.format and self.event.format.team_mode == TeamMode.FREE_FOR_ALL:
+            # In free for all, each player is assigned their own team. This is
+            # annoying, so default to the normal method of printing.
+            for i, player in enumerate(self.event.get_participants()):
+                # Skip subs
+                if player.assigned_team is None:
+                    continue
 
-            if i > 0:
-                # Add a space between mentions to make it more readable.
-                content += f" {mention}"
-            else:
-                content += f"{mention}"
+                mention = f"@{player.user.name}"
+                if isinstance(player.user.user, discord.User | discord.Member):
+                    mention = player.user.user.mention
+
+                if i > 0:
+                    # Add a space between mentions to make it more readable.
+                    content += f" {mention}"
+                else:
+                    content += f"\n{mention}"
+        else:
+            teams = self._sort_teams()
+            for team_index, team in teams.items():
+                content += f"\n**Team {team_index+1}**"
+                for player in team:
+                    # Skip subs
+                    if player.assigned_team is None:
+                        continue
+
+                    mention = f"@{player.user.name}"
+                    if isinstance(player.user.user, discord.User | discord.Member):
+                        mention = player.user.user.mention
+
+                    content += f" {mention}"
 
         content += "\n\n"
 

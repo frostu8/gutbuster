@@ -1,3 +1,4 @@
+from copy import copy
 import datetime
 import string
 import random
@@ -77,7 +78,7 @@ class Event(object):
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
 
-    async def preload_format(self, conn: AsyncConnection):
+    async def preload_format(self, conn: AsyncConnection) -> Optional[EventFormat]:
         """
         Preloads the format.
         """
@@ -96,6 +97,9 @@ class Event(object):
         row = res.first()
         if row is not None:
             self.format = EventFormat(row.id, name=row.name, team_mode=TeamMode(row.team_mode))
+            return self.format
+        else:
+            return None
 
     async def refetch(self, conn: AsyncConnection) -> None:
         """
@@ -124,7 +128,7 @@ class Event(object):
         self.inserted_at = inserted_at
         self.updated_at = updated_at
 
-    async def preload_participants(self, conn: AsyncConnection):
+    async def preload_participants(self, conn: AsyncConnection) -> List[Participant]:
         """
         Preloads participants.
 
@@ -172,6 +176,8 @@ class Event(object):
             )
 
             self.participants.append(participant)
+
+        return self.participants
 
     def get_participants(self) -> List[Participant]:
         """
@@ -309,11 +315,43 @@ class Event(object):
         else:
             raise ValueError("cannot remove user that isn't participating")
 
-    async def assign_teams(self, conn: AsyncConnection) -> None:
+    async def assign_teams(self, conn: AsyncConnection, *, format: Optional[EventFormat] = None) -> None:
         """
         Assigns teams to the players.
         """
-        pass
+
+        if format is None:
+            format = self.format
+        if format is None:
+            raise ValueError("No format specified")
+
+        participants = self.participants
+        if participants is None:
+            participants = await self.preload_participants(conn)
+
+        # Shuffle
+        participants = copy(participants)
+        random.shuffle(participants)
+
+        # Sort into teams
+        match format.team_mode:
+            case (
+                TeamMode.TWO_TEAMS
+                | TeamMode.THREE_TEAMS
+                | TeamMode.FOUR_TEAMS
+            ):
+                # FIXME: This means basically nothing outside of TeamMode
+                team_count = format.team_mode.value
+
+                for i, player in enumerate(participants):
+                    team_no = i % team_count
+                    await player.assign_team(team_no, conn)
+            case TeamMode.FREE_FOR_ALL:
+                # Easiest case, just assign each player their own team
+                for i, player in enumerate(participants):
+                    await player.assign_team(i, conn)
+            case _:
+                raise ValueError(f"invalid team mode {format.team_mode}")
 
     async def delete(self, conn: AsyncConnection) -> None:
         """

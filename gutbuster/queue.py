@@ -318,6 +318,8 @@ class QueueModule(Module):
         if server is not None:
             await event.set_remote(server.remote, conn)
 
+        # Create teams
+        await event.assign_teams(conn)
         await conn.commit()
 
         # Notify users

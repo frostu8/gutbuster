@@ -311,6 +311,8 @@ class FormatVote(ui.LayoutView):
             if server is not None:
                 await self.event.set_remote(server.remote, conn)
 
+            # Assign teams
+            await self.event.assign_teams(conn)
             await conn.commit()
 
         # Update the message
