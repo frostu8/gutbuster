@@ -1,5 +1,7 @@
+from gutbuster.ui.format import FormatSelector
+from copy import copy
 from gutbuster.sticky import StickyServer
-from gutbuster.ui import FormatVote
+from gutbuster.ui import FormatVote, QueueStatus
 from math import floor, ceil
 from dataclasses import dataclass
 from gutbuster.app import Module
@@ -14,7 +16,7 @@ from gutbuster.model import (
     Event,
     get_event,
     get_active_events_for,
-    Participant, Room, get_current_event, get_active_events,
+    Participant, Room, get_current_event, get_active_events, FormatSelectMode,
 )
 from gutbuster.room import RoomModule
 from gutbuster.config import load as load_config, Config
@@ -216,106 +218,6 @@ class ActivityTracker:
         await self._process(interaction.channel, interaction.user)
 
 
-async def start_event(
-    config: Config,
-    watcher: ServerWatcher,
-    client: discord.Client,
-    db: AsyncEngine,
-    sticky_server: StickyServer,
-    event: Event,
-    conn: AsyncConnection,
-) -> None:
-    """
-    Starts an event, notifying all waiting players.
-    """
-
-    # Set the started flag in the DB
-    await event.set_status(EventStatus.STARTED, conn)
-
-    # Notify players in the channel
-    channel = event.room.channel
-    if isinstance(channel, discord.Object):
-        channel = client.get_channel(channel.id)
-
-    if channel is None or not isinstance(channel, discord.TextChannel):
-        raise ValueError("Failed to get room channel")
-
-    # Preload all users
-    for participant in event.get_participants():
-        await participant.user.fetch_user(client)
-
-    # Add a special message to make this Mogi feel extra special <3
-    random_message = None
-    if len(config.messages.gathered) > 0:
-        random_message = random.choice(config.messages.gathered)
-
-    view = FormatVote(
-        client,
-        config,
-        watcher,
-        db,
-        sticky_server,
-        event,
-        flavor=random_message,
-        timeout=120,
-        votes_needed=event.room.votes_required,
-    )
-    view.message = await channel.send(
-        allowed_mentions=view.allowed_mentions(), view=view
-    )
-
-    # Uncan all participants from other mogis
-    uncanned: Dict[int, List[User]] = {}
-    for p in event.get_participants():
-        canned_events = await get_active_events_for(p.user, conn)
-
-        for canned in canned_events:
-            # Don't uncan from our own event
-            if canned.id == event.id:
-                continue
-            # This probably shouldn't happen, but check if the event is still
-            # LFG
-            if not canned.status == EventStatus.LFG:
-                continue
-
-            # Unregister from event
-            await canned.leave(p.user, conn)
-
-            if canned.room.channel.id not in uncanned.keys():
-                uncanned[canned.room.channel.id] = []
-            uncanned[canned.room.channel.id].append(p.user)
-
-    # Notify channels of mass uncanning
-    for k, v in uncanned.items():
-        other_channel = client.get_channel(k)
-        if other_channel is None:
-            # Silently avoid notifying non-existent channel
-            continue
-        if not isinstance(other_channel, discord.TextChannel):
-            raise ValueError("mogi started in non-guild channel")
-
-        content = ""
-        for i, user in enumerate(v):
-            # Get user
-            discord_user = await user.fetch_user(client)
-
-            if i == 0:
-                content += discord_user.mention
-            elif i < len(v) - 1:
-                content += f", {discord_user.mention}"
-            else:
-                content += f" and {discord_user.mention}"
-
-        # Humanize
-        if len(v) == 1:
-            content += " has "
-        else:
-            content += " have "
-
-        content += f"been removed from the mogi because another mogi in {channel.mention} has gathered."
-        await other_channel.send(content, allowed_mentions=AllowedMentions.none())
-
-
 class QueueModule(Module):
     """
     The queue module.
@@ -355,6 +257,172 @@ class QueueModule(Module):
 
     async def on_interaction(self, interaction: discord.Interaction):
         await self.activity.on_interaction(interaction)
+
+    async def start_vote(
+        self,
+        event: Event,
+        *,
+        client: discord.Client,
+        flavor_text: Optional[str] = None
+    ):
+        channel = event.room.channel
+        if isinstance(channel, discord.Object):
+            channel = client.get_channel(channel.id)
+        if not isinstance(channel, discord.TextChannel):
+            raise ValueError("Mogi can only take place in a guild channel")
+
+        view = FormatVote(
+            client,
+            self.config,
+            self.watcher,
+            self.db,
+            self.sticky_server,
+            event,
+            flavor=flavor_text,
+            timeout=120,
+            votes_needed=event.room.votes_required,
+        )
+        view.message = await channel.send(
+            allowed_mentions=view.allowed_mentions(), view=view
+        )
+
+    async def start_random(
+        self,
+        event: Event,
+        *,
+        client: discord.Client,
+        conn: AsyncConnection,
+        flavor_text: Optional[str] = None
+    ):
+        channel = event.room.channel
+        if isinstance(channel, discord.Object):
+            channel = client.get_channel(channel.id)
+        if not isinstance(channel, discord.TextChannel):
+            raise ValueError("Mogi can only take place in a guild channel")
+
+        # Randomly select format
+        # First, make sure we even have the formats
+        await event.room.preload_formats(conn)
+
+        formats = copy(event.room.formats)
+        random.shuffle(formats)
+
+        assert len(formats) > 0, "Room formats must not be empty"
+        selected_format = formats.pop()
+
+        # Assign format to event
+        await event.set_format(selected_format, conn)
+
+        # Find server for queue
+        server = await selected_format.find_server(conn)
+        if server is not None:
+            await event.set_remote(server.remote, conn)
+
+        await conn.commit()
+
+        # Notify users
+        view = FormatSelector(
+            event,
+            flavor_text=flavor_text,
+            timeout=120,
+        )
+        await channel.send(view=view, allowed_mentions=view.allowed_mentions())
+
+        # Send new view
+        sticky = QueueStatus(
+            client,
+            self.db,
+            self.config,
+            event,
+            self.watcher,
+        )
+        self.sticky_server.stick(channel, view=sticky, allowed_mentions=AllowedMentions.none())
+
+    async def start_event(
+        self,
+        event: Event,
+        *,
+        conn: AsyncConnection,
+        client: discord.Client,
+    ) -> None:
+        """
+        Starts an event, notifying all waiting players.
+        """
+
+        # Set the started flag in the DB
+        await event.set_status(EventStatus.STARTED, conn)
+
+        # Notify players in the channel
+        channel = event.room.channel
+        if isinstance(channel, discord.Object):
+            channel = client.get_channel(channel.id)
+        if not isinstance(channel, discord.TextChannel):
+            raise ValueError("Failed to get room channel")
+
+        # Preload all users
+        for participant in event.get_participants():
+            await participant.user.fetch_user(client)
+
+        # Add a special message to make this Mogi feel extra special <3
+        flavor_text = None
+        if len(self.config.messages.gathered) > 0:
+            flavor_text = random.choice(self.config.messages.gathered)
+
+        if event.room.format_selection_mode == FormatSelectMode.VOTE:
+            await self.start_vote(event, client=client, flavor_text=flavor_text)
+        elif event.room.format_selection_mode == FormatSelectMode.RANDOM:
+            await self.start_random(event, conn=conn, client=client, flavor_text=flavor_text)
+
+        # Uncan all participants from other mogis
+        uncanned: Dict[int, List[User]] = {}
+        for p in event.get_participants():
+            canned_events = await get_active_events_for(p.user, conn)
+
+            for canned in canned_events:
+                # Don't uncan from our own event
+                if canned.id == event.id:
+                    continue
+                # This probably shouldn't happen, but check if the event is still
+                # LFG
+                if not canned.status == EventStatus.LFG:
+                    continue
+
+                # Unregister from event
+                await canned.leave(p.user, conn)
+
+                if canned.room.channel.id not in uncanned.keys():
+                    uncanned[canned.room.channel.id] = []
+                uncanned[canned.room.channel.id].append(p.user)
+
+        # Notify channels of mass uncanning
+        for k, v in uncanned.items():
+            other_channel = client.get_channel(k)
+            if other_channel is None:
+                # Silently avoid notifying non-existent channel
+                continue
+            if not isinstance(other_channel, discord.TextChannel):
+                raise ValueError("mogi started in non-guild channel")
+
+            content = ""
+            for i, user in enumerate(v):
+                # Get user
+                discord_user = await user.fetch_user(client)
+
+                if i == 0:
+                    content += discord_user.mention
+                elif i < len(v) - 1:
+                    content += f", {discord_user.mention}"
+                else:
+                    content += f" and {discord_user.mention}"
+
+            # Humanize
+            if len(v) == 1:
+                content += " has "
+            else:
+                content += " have "
+
+            content += f"been removed from the mogi because another mogi in {channel.mention} has gathered."
+            await other_channel.send(content, allowed_mentions=AllowedMentions.none())
 
     @app_commands.command(name="c", description="Queue into the mogi")
     async def can(self, interaction: discord.Interaction):
@@ -418,7 +486,7 @@ class QueueModule(Module):
                 event.status == EventStatus.LFG
                 and len(event.get_participants()) >= room.players_required
             ):
-                await start_event(self.config, self.watcher, interaction.client, self.db, self.sticky_server, event, conn)
+                await self.start_event(event, conn=conn, client=interaction.client)
 
             await conn.commit()
 

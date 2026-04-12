@@ -12,6 +12,78 @@ import discord
 from .queue import QueueStatus
 
 
+class FormatSelectorContainer(ui.Container):
+    event: Event
+    format: EventFormat
+
+    flavor_text: Optional[str] = None
+
+    header: ui.TextDisplay = ui.TextDisplay("")
+
+    def __init__(self, event: Event, format: EventFormat, *, flavor_text: Optional[str] = None):
+        super().__init__()
+        self.event = event
+        self.format = format
+
+        self.flavor_text = flavor_text
+
+        # Generate header content
+        content = ""
+        for i, participant in enumerate(self.event.get_participants()):
+            mention = f"@{participant.user.name}"
+            if isinstance(participant.user.user, discord.User | discord.Member):
+                mention = participant.user.user.mention
+
+            if i > 0:
+                # Add a space between mentions to make it more readable.
+                content += f" {mention}"
+            else:
+                content += f"{mention}"
+
+        if self.flavor_text is not None:
+            content += f"\n{self.flavor_text}"
+
+        content += (
+            f"\n\nMogi has gathered."
+            f"\nThe wheel has sealed your fate. **Format {self.format.name} selected!**"
+        )
+
+        # update container
+        self.header.content = content
+
+
+class FormatSelector(ui.LayoutView):
+    """
+    A barebones version of `FormatVote` that only mentions the queue with the
+    chosen format.
+    """
+
+    event: Event
+
+    container: FormatSelectorContainer
+
+    def __init__(
+        self,
+        event: Event,
+        *,
+        timeout: int | float = 120,
+        flavor_text: Optional[str] = None,
+    ):
+        super().__init__(timeout=timeout)
+        if event.format is None:
+            raise ValueError("The passed event must have a format selected")
+
+        self.event = event
+        self.container = FormatSelectorContainer(event, event.format, flavor_text=flavor_text)
+
+        self.add_item(self.container)
+
+    def allowed_mentions(self) -> AllowedMentions:
+        allowed_mentions = AllowedMentions.none()
+        allowed_mentions.users = [p.user.user for p in self.event.get_participants()]
+        return allowed_mentions
+
+
 class VoteButton(ui.Button):
     format: EventFormat
     func: Callable[[discord.Interaction, EventFormat], Awaitable[Any]]
@@ -173,7 +245,6 @@ class FormatVote(ui.LayoutView):
         allowed_mentions = AllowedMentions.none()
         allowed_mentions.users = [p.user.user for p in self.event.get_participants()]
         return allowed_mentions
-        # return AllowedMentions.none()
 
     def update_header(self) -> None:
         header = ""

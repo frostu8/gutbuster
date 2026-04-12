@@ -98,12 +98,10 @@ CREATE TABLE participant (
     -- Foreign keys
     user_id INTEGER NOT NULL REFERENCES user(id),
     event_id INTEGER NOT NULL REFERENCES event(id),
-    -- How much score the player had at the end of the mogi
-    -- If the mogi hasn't finished yet, this can be null.
-    -- If the mogi is finished and this is null, this may have been a
-    -- substitute player that was unable to play. This shouldn't count against
-    -- them and is purely for documentation purposes.
-    score INTEGER,
+    -- The team number the participant was assigned.
+    -- If this is NULL, the player may not be assigned a team, or is a
+    -- substitute player.
+    assigned_team INTEGER,
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
 

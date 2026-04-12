@@ -33,7 +33,7 @@ class Participant(object):
     id: int
     event_id: int
     user: User
-    score: Optional[int] = field(default=None)
+    assigned_team: Optional[int] = field(default=None)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
 
@@ -121,7 +121,7 @@ class Event(object):
             SELECT
                 p.id,
                 p.user_id,
-                p.score,
+                p.assigned_team,
                 p.inserted_at,
                 p.updated_at,
                 u.name,
@@ -149,7 +149,7 @@ class Event(object):
                 id=row.id,
                 event_id=self.id,
                 user=user,
-                score=row.score,
+                assigned_team=row.assigned_team,
                 inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
                 updated_at=datetime.datetime.fromisoformat(row.updated_at),
             )
