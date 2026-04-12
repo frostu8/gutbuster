@@ -335,11 +335,30 @@ class FormatVote(ui.LayoutView):
     async def vote(self, interaction: discord.Interaction, format: EventFormat):
         should_close = False
 
+        name = interaction.user.global_name
+
+        assert self.event.participants, "Participants preloaded"
+        try:
+            player = next(p for p in self.event.participants if p.user.user.id == interaction.user.id)
+        except StopIteration:
+            # Player is not in the queue. Tell them to bug off.
+            await interaction.followup.send(
+                f"{name}, you are not in the queue.",
+                ephemeral=True
+            )
+            return
+
+        # Check if the player is a sub
+        if player.assigned_team is None:
+            await interaction.followup.send(
+                f"Sorry {name}, subs may not vote on formats!",
+                ephemeral=True
+            )
+            return
+
         # Do nothing if the vote is closed.
         # Do nothing if this user isn't part of the mogi's starting selection
-        if self.selected_format is None and any(
-            p.user.user.id == interaction.user.id for p in self.event.get_participants()
-        ):
+        if self.selected_format is None:
             # Remove user from other votes
             for entry in self.formats:
                 old_len = len(entry.votes)

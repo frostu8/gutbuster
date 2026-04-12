@@ -270,6 +270,16 @@ class QueueModule(Module):
         if not isinstance(channel, discord.TextChannel):
             raise ValueError("Mogi can only take place in a guild channel")
 
+        # Assign temporary teams during voting phase to let the bot know to
+        # restrict the player's movement
+        async with self.db.connect() as conn:
+            participants = event.participants
+            if participants is None:
+                participants = await event.preload_participants(conn)
+
+            for i, player in enumerate(participants):
+                await player.assign_team(i, conn)
+
         view = FormatVote(
             client,
             self.config,
