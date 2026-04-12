@@ -331,14 +331,14 @@ class QueueModule(Module):
         await channel.send(view=view, allowed_mentions=view.allowed_mentions())
 
         # Send new view
-        sticky = QueueStatus(
+        view = QueueStatus(
             client,
             self.db,
             self.config,
             event,
             self.watcher,
         )
-        self.sticky_server.stick(channel, view=sticky, allowed_mentions=AllowedMentions.none())
+        await channel.send(view=view, allowed_mentions=AllowedMentions.none())
 
     async def start_event(
         self,
