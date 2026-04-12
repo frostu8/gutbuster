@@ -739,7 +739,10 @@ class QueueModule(Module):
             # Ignore any user commands
             raise ValueError("Command not being called in a guild context?")
 
-        name = getattr(interaction.user, "nick", None) or interaction.user.global_name
+        member = interaction.user
+        assert isinstance(member, discord.Member), "Command not run in a guild context"
+
+        name = member.nick or member.global_name
 
         async with self.db.connect() as conn:
             # Find the room
@@ -759,6 +762,25 @@ class QueueModule(Module):
                     ephemeral=True,
                 )
                 return
+
+            # TODO: magic number
+            rot_time = event.inserted_at + timedelta(minutes=50)
+
+            now = datetime.now()
+            rotted = now >= rot_time
+
+            # Check if the user is trying to end a queue in LFG phase
+            # Only administrators can run this
+            if (
+                event.status == EventStatus.LFG
+                and not rotted
+                and member.guild_permissions.administrator
+            ):
+                await interaction.response.send_message(
+                    "The mogi queue may be cleared in"
+                    f" <t:{math.trunc(rot_time.timestamp())}:R>.",
+                    ephemeral=True,
+                )
 
             # Check if the mogi has "started," but the format hasn't been
             # determined.

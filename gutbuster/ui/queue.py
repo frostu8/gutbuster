@@ -163,9 +163,9 @@ class QueueStatusContainer(ui.Container):
             await self.server.update_event.wait()
 
 
-class QueueStatus(StickyView):
+class QueueStatus(ui.LayoutView):
     """
-    A sticky message that reports the current status of a Mogi queue.
+    A message that reports the current status of a Mogi queue.
     """
 
     container: QueueStatusContainer
@@ -243,17 +243,6 @@ class QueueStatus(StickyView):
         super().stop()
         if self._realtime_task is not None:
             self._realtime_task.cancel()
-
-    async def on_refresh(self) -> None:
-        await super().on_refresh()
-        await self.update()
-
-        if self.event.status == EventStatus.ENDED:
-            self.stop()
-            return
-
-        if self.has_realtime:
-            self.realtime()
 
     async def on_timeout(self) -> None:
         await super().on_timeout()
