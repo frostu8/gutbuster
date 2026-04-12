@@ -1,6 +1,6 @@
 import discord
 import datetime
-from enum import Enum
+from enum import Enum, unique
 from dataclasses import dataclass, field
 from typing import Optional, List
 from sqlalchemy import text
@@ -8,12 +8,44 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from .server import Server
 
 
+@unique
 class FormatSelectMode(Enum):
     """
     How to select formats in an event.
     """
     VOTE = 0
     RANDOM = 1
+
+
+@unique
+class TeamMode(Enum):
+    """
+    How to assign teams to players after the mogi has gathered.
+    """
+    FREE_FOR_ALL = 0
+    TWO_TEAMS = 2
+    THREE_TEAMS = 3
+    FOUR_TEAMS = 4
+
+    def has_equal_teams(self, player_count: int) -> bool:
+        """
+        Given a player count `player_count`, will the teams have equal players?
+        Returs `true` if they will have equal players.
+        """
+
+        match self:
+            case TeamMode.FREE_FOR_ALL:
+                # Free for all will always have equal teams
+                return True
+            case (
+                TeamMode.TWO_TEAMS
+                | TeamMode.THREE_TEAMS
+                | TeamMode.FOUR_TEAMS
+            ):
+                team_count = self.value
+                return player_count % team_count == 0
+            case _:
+                return False
 
 
 @dataclass
@@ -24,6 +56,7 @@ class EventFormat(object):
 
     id: int
     name: str = field(kw_only=True)
+    team_mode: TeamMode = field(kw_only=True)
 
     async def find_server(self, conn: AsyncConnection) -> Optional[Server]:
         """
@@ -96,7 +129,7 @@ class Room(object):
 
         res = await conn.execute(
             text("""
-            SELECT id, name
+            SELECT id, name, team_mode
             FROM event_format
             WHERE room_id = :room_id
             """),
@@ -105,28 +138,34 @@ class Room(object):
 
         self.formats.clear()
         for row in res:
-            format = EventFormat(row.id, name=row.name)
+            format = EventFormat(row.id, name=row.name, team_mode=TeamMode(row.team_mode))
             self.formats.append(format)
 
-    async def add_format(self, name: str, conn: AsyncConnection) -> EventFormat:
+    async def add_format(
+        self,
+        name: str,
+        conn: AsyncConnection,
+        *,
+        team_mode: TeamMode = TeamMode.FREE_FOR_ALL
+    ) -> EventFormat:
         """
         Adds a format to the room.
         """
 
         res = await conn.execute(
             text("""
-            INSERT INTO event_format (room_id, name)
-            VALUES (:room_id, :name)
+            INSERT INTO event_format (room_id, name, team_mode)
+            VALUES (:room_id, :name, :team_mode)
             RETURNING id
             """),
-            {"room_id": self.id, "name": name},
+            {"room_id": self.id, "name": name, "team_mode": team_mode.value},
         )
 
         row = res.first()
         if row is None:
             raise ValueError("failed to get id of new row")
 
-        format = EventFormat(row.id, name=name)
+        format = EventFormat(row.id, name=row.name, team_mode=team_mode)
         self.formats.append(format)
         return format
 

@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.exc import IntegrityError
 
-from .room import Room, EventFormat, get_room, FormatSelectMode
+from .room import Room, EventFormat, get_room, FormatSelectMode, TeamMode
 from .user import User
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,23 @@ class Participant(object):
     def __le__(self, other):
         return self.inserted_at <= other.inserted_at
 
+    async def assign_team(self, team_id: int, conn: AsyncConnection):
+        """
+        Assigns a team to the participant.
+        """
+
+        now = datetime.datetime.now()
+        await conn.execute(
+            text("""
+            UPDATE participant
+            SET assigned_team = :team_id, updated_at = :now
+            WHERE id = :participant_id
+            """),
+            {"participant_id": self.id, "now": now.isoformat(), "team_id": team_id},
+        )
+
+        self.assigned_team = team_id
+
 
 @dataclass(kw_only=True)
 class Event(object):
@@ -67,7 +84,7 @@ class Event(object):
 
         res = await conn.execute(
             text("""
-            SELECT f.id, f.name
+            SELECT f.id, f.name, f.team_mode
             FROM event e, event_format f
             WHERE
                 e.format_id = f.id
@@ -78,7 +95,7 @@ class Event(object):
 
         row = res.first()
         if row is not None:
-            self.format = EventFormat(row.id, name=row.name)
+            self.format = EventFormat(row.id, name=row.name, team_mode=TeamMode(row.team_mode))
 
     async def refetch(self, conn: AsyncConnection) -> None:
         """
@@ -292,6 +309,12 @@ class Event(object):
         else:
             raise ValueError("cannot remove user that isn't participating")
 
+    async def assign_teams(self, conn: AsyncConnection) -> None:
+        """
+        Assigns teams to the players.
+        """
+        pass
+
     async def delete(self, conn: AsyncConnection) -> None:
         """
         Deletes an event.
@@ -379,7 +402,8 @@ async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[E
             r.votes_required,
             r.inserted_at AS room_inserted_at,
             r.updated_at AS room_updated_at,
-            f.name AS format_name
+            f.name AS format_name,
+            f.team_mode
         FROM
             event e, room r, participant p
         LEFT OUTER JOIN
@@ -412,7 +436,7 @@ async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[E
 
         format = None
         if row.format_id:
-            format = EventFormat(id=row.format_id, name=row.format_name)
+            format = EventFormat(row.format_id, name=row.format_name, team_mode=TeamMode(row.team_mode))
 
         # Load the event
         event = Event(
@@ -447,7 +471,8 @@ async def get_active_events(guild_id: int, conn: AsyncConnection) -> Sequence[Ev
             r.votes_required,
             r.inserted_at AS room_inserted_at,
             r.updated_at AS room_updated_at,
-            f.name AS format_name
+            f.name AS format_name,
+            f.team_mode
         FROM
             event e, room r
         LEFT OUTER JOIN
@@ -479,7 +504,7 @@ async def get_active_events(guild_id: int, conn: AsyncConnection) -> Sequence[Ev
 
         format = None
         if row.format_id:
-            format = EventFormat(id=row.format_id, name=row.format_name)
+            format = EventFormat(row.format_id, name=row.format_name, team_mode=TeamMode(row.team_mode))
 
         # Load the event
         event = Event(
@@ -506,7 +531,7 @@ async def get_event(id: int, conn: AsyncConnection) -> Event:
 
     res = await conn.execute(
         text("""
-        SELECT e.*, r.discord_channel_id, f.name AS format_name
+        SELECT e.*, r.discord_channel_id, f.name AS format_name, f.team_mode
         FROM event e, room r
         LEFT OUTER JOIN
             event_format f
@@ -532,7 +557,7 @@ async def get_event(id: int, conn: AsyncConnection) -> Event:
 
     format = None
     if row.format_id:
-        format = EventFormat(id=row.format_id, name=row.format_name)
+        format = EventFormat(row.format_id, name=row.format_name, team_mode=TeamMode(row.team_mode))
 
     event = Event(
         id=row.id,
@@ -557,7 +582,7 @@ async def get_current_event(room: Room, conn: AsyncConnection) -> Optional[Event
 
     res = await conn.execute(
         text("""
-        SELECT e.*, f.name AS format_name
+        SELECT e.*, f.name AS format_name, f.team_mode
         FROM event e
         LEFT OUTER JOIN
             event_format f
@@ -577,7 +602,7 @@ async def get_current_event(room: Room, conn: AsyncConnection) -> Optional[Event
 
     format = None
     if row.format_id:
-        format = EventFormat(id=row.format_id, name=row.format_name)
+        format = EventFormat(row.format_id, name=row.format_name, team_mode=TeamMode(row.team_mode))
 
     inserted_at = datetime.datetime.fromisoformat(row.inserted_at)
     updated_at = datetime.datetime.fromisoformat(row.updated_at)
