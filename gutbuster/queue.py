@@ -597,6 +597,10 @@ class QueueModule(Module):
             events = await get_active_events_for(user, conn)
             for event in events:
                 await event.preload_participants(conn)
+                if event.is_user_playing(user):
+                    # Skip any started mogis, as the user cannot leave them
+                    continue
+
                 # Leave the event
                 await event.leave(user, conn)
 
