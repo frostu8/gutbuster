@@ -287,7 +287,7 @@ class FormatVote(ui.LayoutView):
 
         # Coin flip any ties
         random.shuffle(votes)
-        votes.sort(key=lambda v: v.votes, reverse=True)
+        votes.sort(key=lambda v: len(v.votes), reverse=True)
 
         self.selected_format = votes[0].format
         self.update_header()
