@@ -1,5 +1,5 @@
 from gutbuster.sticky import StickyServer
-from gutbuster.ui import VoteView
+from gutbuster.ui import FormatVote
 from math import floor, ceil
 from dataclasses import dataclass
 from gutbuster.app import Module
@@ -249,7 +249,7 @@ async def start_event(
     if len(config.messages.gathered) > 0:
         random_message = random.choice(config.messages.gathered)
 
-    view = VoteView(
+    view = FormatVote(
         client,
         config,
         watcher,

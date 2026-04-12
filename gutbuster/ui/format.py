@@ -114,7 +114,7 @@ class VoteContainer(ui.Container):
     header: ui.TextDisplay = ui.TextDisplay("")
 
 
-class VoteView(ui.LayoutView):
+class FormatVote(ui.LayoutView):
     """
     A view that allows players to vote for their favorite format!
     """
