@@ -406,6 +406,10 @@ class QueueModule(Module):
                     uncanned[canned.room.channel.id] = []
                 uncanned[canned.room.channel.id].append(p.user)
 
+                # Remove events if this empties the participant count
+                if len(event.get_participants()) == 0:
+                    await canned.delete(conn)
+
         # Notify channels of mass uncanning
         for k, v in uncanned.items():
             other_channel = client.get_channel(k)
@@ -625,6 +629,9 @@ class QueueModule(Module):
                 await channel.send(
                     f"{name} has dropped from the mogi -- {player_count} players\nUse </c:{self.command_can.id}> to enter the queue.",
                 )
+
+                if len(event.get_participants()) == 0:
+                    await event.delete(conn)
 
             await conn.commit()
             await interaction.response.send_message(
