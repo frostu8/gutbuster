@@ -754,9 +754,8 @@ class QueueModule(Module):
         """
         The /end command.
 
-        Ends the current mogi. To end a mogi, two conditions must be met:
-        - The mogi has started.
-        - The mogi has had a format selected.
+        Ends the current mogi. To end a mogi, either the queue must have rotted
+        or the mogi has started.
         """
 
         assert self.command_can
@@ -796,11 +795,9 @@ class QueueModule(Module):
             rotted = now >= rot_time
 
             # Check if the user is trying to end a queue in LFG phase
-            # Only administrators can run this
             if (
                 event.status == EventStatus.LFG
                 and not rotted
-                and not member.guild_permissions.administrator
             ):
                 await interaction.response.send_message(
                     "The mogi queue may be cleared"
@@ -810,11 +807,10 @@ class QueueModule(Module):
                 return
 
             # Check if the mogi has "started," but the format hasn't been
-            # determined. Admins can bypass this
+            # determined.
             if (
                 event.status == EventStatus.STARTED
                 and event.format is None
-                and not member.guild_permissions.administrator
             ):
                 await interaction.response.send_message(
                     "A vote is being held to determine the format.",
@@ -842,7 +838,7 @@ class QueueModule(Module):
         await self._command_end(interaction)
 
 
-    @app_commands.command(name="clear", description="Forgets the current mogi")
+    @app_commands.command(name="clear", description="Ends the current mogi forcefully")
     @default_permissions(None)
     async def clear(self, interaction: discord.Interaction):
         """
@@ -869,11 +865,66 @@ class QueueModule(Module):
             # Get the currently active event
             event = await get_current_event(room, conn)
             if event is not None:
+                # Close the mogi
+                await event.set_status(EventStatus.ENDED, conn)
+                await conn.commit()
+
+        await interaction.response.send_message(
+            "The mogi queue has been cleared.",
+        )
+
+    @app_commands.command(name="remove", description="Removes a player from the queue")
+    @default_permissions(None)
+    async def remove(self, interaction: discord.Interaction, user: discord.Member):
+        """
+        The /remove command.
+
+        Removes a player from the queue.
+        """
+
+        assert isinstance(interaction.channel, TextChannel), "command not being called in a guild context"
+
+        async with self.db.connect() as conn:
+            # Find the room
+            room = await get_room(interaction.channel, conn)
+            if room is None or not room.enabled:
+                await interaction.response.send_message(
+                    "This channel isn't set up for mogis!",
+                    ephemeral=True,
+                )
+                return
+
+            # Get the currently active event
+            event = await get_current_event(room, conn)
+            if event is None:
+                await interaction.response.send_message(
+                    f"Player {user.display_name} is not in the queue.",
+                    ephemeral=True,
+                )
+                return
+
+            await event.preload_participants(conn)
+
+            # Find the given player
+            try:
+                player = next(p for p in event.get_participants() if p.user.user.id == user.id)
+            except StopIteration:
+                await interaction.response.send_message(
+                    f"Player {user.display_name} is not in the queue.",
+                    ephemeral=True,
+                )
+                return
+
+            # Remove the player
+            await event.leave(player.user, conn)
+            # Remove event if this removes the last player
+            if len(event.get_participants()) == 0:
                 await event.delete(conn)
 
-            await interaction.response.send_message(
-                "The mogi queue has been cleared.",
-            )
-
             await conn.commit()
+
+        await interaction.response.send_message(
+            f"{user.mention} has been removed from the queue.",
+            allowed_mentions=AllowedMentions(users=[user]),
+        )
 
