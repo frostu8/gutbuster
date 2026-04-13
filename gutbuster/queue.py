@@ -394,8 +394,8 @@ class QueueModule(Module):
                 # Don't uncan from our own event
                 if canned.id == event.id:
                     continue
-                # This probably shouldn't happen, but check if the event is still
-                # LFG
+                # This probably shouldn't happen, but check if the event is
+                # still LFG
                 if not canned.status == EventStatus.LFG:
                     continue
 
@@ -407,7 +407,7 @@ class QueueModule(Module):
                 uncanned[canned.room.channel.id].append(p.user)
 
                 # Remove events if this empties the participant count
-                if len(event.get_participants()) == 0:
+                if len(canned.get_participants()) == 0:
                     await canned.delete(conn)
 
         # Notify channels of mass uncanning
@@ -801,8 +801,12 @@ class QueueModule(Module):
                 return
 
             # Check if the mogi has "started," but the format hasn't been
-            # determined.
-            if event.status == EventStatus.STARTED and event.format is None:
+            # determined. Admins can bypass this
+            if (
+                event.status == EventStatus.STARTED
+                and event.format is None
+                and not member.guild_permissions.administrator
+            ):
                 await interaction.response.send_message(
                     "A vote is being held to determine the format.",
                     ephemeral=True,
