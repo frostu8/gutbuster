@@ -726,8 +726,17 @@ class QueueModule(Module):
                 if not isinstance(channel, discord.TextChannel):
                     raise ValueError("Mogi started in a non-text channel context")
 
+                match event.status:
+                    case EventStatus.STARTED:
+                        status_icon = "⚡"
+                    case _:
+                        status_icon = ""
+
                 # Create queue information
-                message += f"\n\n{channel.mention} ({channel.name}) - {player_count}/{max_player_count}\n"
+                message += (
+                    f"\n\n{status_icon}{channel.mention} ({channel.name})"
+                    f" - {player_count}/{max_player_count}\n"
+                )
                 for i, player in enumerate(event.get_participants()):
                     user = await player.user.fetch_user(interaction.client)
 
