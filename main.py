@@ -1,16 +1,15 @@
 import sys
 import os
-from gutbuster.queue import QueueModule
-from gutbuster.room import RoomModule
-from gutbuster.sticky import StickyModule, StickyServer
-from gutbuster.app import App
+from bot.queue import QueueModule
+from bot.app import App
+from bot.config import load as load_config
+from bot.room import RoomModule
 import discord
 from gutbuster.servers import ServerWatcher
+from bot.servers import ServersModule
 from sqlalchemy.ext.asyncio import create_async_engine
 from dotenv import load_dotenv
 import logging
-from gutbuster.config import load as load_config
-from gutbuster.servers import ServersModule
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +22,13 @@ config = load_config("config.toml")
 # Load database
 db = create_async_engine("sqlite+aiosqlite:///dev_gutbuster.sqlite")
 watcher = ServerWatcher(db)
-sticky = StickyServer()
 
 intents = discord.Intents.default()
 app = App(intents=intents)
 
 # Load room commands
-app.add_module(StickyModule(sticky))
 app.add_module(RoomModule(db))
-app.add_module(QueueModule(config, watcher, app, db, sticky))
+app.add_module(QueueModule(config, watcher, app, db))
 app.add_module(ServersModule(config, db, watcher))
 
 

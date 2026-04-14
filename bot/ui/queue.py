@@ -1,10 +1,8 @@
-from gutbuster.model.room import TeamMode
 from sqlalchemy.ext.asyncio import AsyncEngine
-from gutbuster.sticky import StickyView
 import math
 from datetime import datetime, timezone
 from copy import copy
-from gutbuster.config import Config
+from bot.config import Config
 import asyncio
 from asyncio import Task
 from discord import ui, AllowedMentions, SeparatorSpacing
@@ -12,6 +10,7 @@ from typing import Optional, Dict, List
 import discord
 from gutbuster.servers import WatchedServer, ServerWatcher, GameSpeed
 from gutbuster.model import Event, EventStatus, Participant
+from gutbuster.model.room import TeamMode
 
 
 class QueueStatusContainer(ui.Container):

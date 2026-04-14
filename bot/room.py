@@ -4,7 +4,7 @@ from discord import app_commands, TextChannel
 from discord.app_commands import default_permissions
 from sqlalchemy.ext.asyncio import AsyncEngine
 from gutbuster.model import get_room, create_room
-from gutbuster.app import Module, GroupModule
+from bot.app import Module, GroupModule
 
 
 class RoomModule(Module):

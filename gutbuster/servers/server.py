@@ -37,7 +37,7 @@ class Server:
     info: Optional[ServerInfo]
     players: List[PlayerInfo]
 
-    pings: List[int]
+    pings: List[float]
 
     _server_name: Optional[str]
 

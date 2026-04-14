@@ -1,10 +1,6 @@
-from gutbuster.ui.format import FormatSelector
 from copy import copy
-from gutbuster.sticky import StickyServer
-from gutbuster.ui import FormatVote, QueueStatus
 from math import floor, ceil
 from dataclasses import dataclass
-from gutbuster.app import Module
 from gutbuster.model import (
     get_or_create_user,
     get_user,
@@ -18,9 +14,13 @@ from gutbuster.model import (
     get_active_events_for,
     Participant, Room, get_current_event, get_active_events, FormatSelectMode,
 )
-from gutbuster.room import RoomModule
-from gutbuster.config import load as load_config, Config
-from gutbuster.servers import ServerWatcher, ServersModule
+from gutbuster.servers import ServerWatcher
+
+from bot.servers import ServersModule
+from bot.config import load as load_config, Config
+from bot.app import Module
+from bot.ui import FormatSelector, FormatVote, QueueStatus
+from bot.room import RoomModule
 
 from dotenv import load_dotenv
 from typing import List, Callable, Awaitable, Any, Optional, Dict, Tuple
@@ -227,18 +227,16 @@ class QueueModule(Module):
     config: Config
     watcher: ServerWatcher
     db: AsyncEngine
-    sticky_server: StickyServer
 
     activity: ActivityTracker
 
     command_can: Optional[app_commands.AppCommand]
     command_drop: Optional[app_commands.AppCommand]
 
-    def __init__(self, config: Config, watcher: ServerWatcher, client: discord.Client, db: AsyncEngine, sticky_server: StickyServer):
+    def __init__(self, config: Config, watcher: ServerWatcher, client: discord.Client, db: AsyncEngine):
         self.config = config
         self.watcher = watcher
         self.db = db
-        self.sticky_server = sticky_server
 
         self.activity = ActivityTracker(db, client)
 

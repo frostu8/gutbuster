@@ -289,7 +289,7 @@ class Packet(ABC):
         return struct.pack("I", checksum) + buf
 
     @classmethod
-    def unpack(cls, packet: bytes) -> Self:
+    def unpack(cls, packet: bytes) -> Packet:
         """
         Unpacks a Ring Racers packet.
 
@@ -321,10 +321,10 @@ class Packet(ABC):
         if packet_cls is None:
             raise NotImplementedError("Packet kind not implemented")
 
-        packet = packet_cls.unpack_inner(packet[8:])
-        packet._checksum = checksum
+        unpacked_packet = packet_cls.unpack_inner(packet[8:])
+        unpacked_packet._checksum = checksum
 
-        return packet
+        return unpacked_packet
 
 
 packet_types: Dict[PacketType, Type[Packet]] = {}
@@ -488,7 +488,7 @@ class PlayerInfoPacket(Packet):
     def unpack_inner(cls, packet: bytes) -> Packet:
         players = []
 
-        for i in range(MAX_PLAYERS):
+        for _ in range(MAX_PLAYERS):
             unpacked, packet = _unpack(cls._packet, packet)
 
             # Do strings
