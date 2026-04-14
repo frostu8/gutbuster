@@ -283,7 +283,6 @@ class QueueModule(Module):
             self.config,
             self.watcher,
             self.db,
-            self.sticky_server,
             event,
             flavor=flavor_text,
             timeout=120,

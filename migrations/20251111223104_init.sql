@@ -4,6 +4,7 @@ CREATE TABLE server (
     discord_guild_id BIGINT NOT NULL,
     remote VARCHAR(255) NOT NULL,
     label VARCHAR(255),
+    description VARCHAR(255),
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
 
@@ -18,6 +19,23 @@ CREATE TABLE user (
     -- The discord ID of the user.
     discord_user_id BIGINT NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL UNIQUE,
+    inserted_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+
+-- Eachh Discord guild has a global config.
+CREATE TABLE guild (
+    id INTEGER PRIMARY KEY,
+    discord_guild_id BIGINT NOT NULL UNIQUE,
+    -- The guild's server status channel
+    server_board_channel_id BIGINT,
+    -- The message in the server board used to update server statuses
+    server_board_message_id BIGINT,
+    -- Below are the default settings for each room.
+    -- See the "room" table for more info
+    players_required INTEGER NOT NULL DEFAULT 8,
+    format_selection_mode INTEGER NOT NULL DEFAULT 0,
+    votes_required INTEGER NOT NULL DEFAULT 4,
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );

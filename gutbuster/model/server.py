@@ -12,6 +12,7 @@ class Server:
     discord_guild_id: int
     remote: str
     label: Optional[str] = field(default=None)
+    description: Optional[str] = field(default=None)
     inserted_at: datetime
     updated_at: datetime
 
@@ -52,6 +53,7 @@ async def create_server(
     conn: AsyncConnection,
     *,
     label: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> Server:
     """
     Creates a new server and registers it to the guild.
@@ -82,6 +84,7 @@ async def create_server(
         discord_guild_id=guild.id,
         remote=remote,
         label=label,
+        description=description,
         inserted_at=now,
         updated_at=now
     )
@@ -111,6 +114,7 @@ async def get_all_servers(conn: AsyncConnection, *, guild: Optional[discord.Obje
             discord_guild_id=row.discord_guild_id,
             remote=row.remote,
             label=row.label,
+            description=row.description,
             inserted_at=datetime.fromisoformat(row.inserted_at),
             updated_at=datetime.fromisoformat(row.updated_at),
         ))

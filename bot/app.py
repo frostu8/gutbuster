@@ -55,7 +55,7 @@ class ModuleMeta(type):
 
                     module_app_commands[elem] = value
 
-        new_cls.__app_commands__ = list(module_app_commands.values())
+        new_cls.__app_commands__: List[app_commands.Command[app_commands.Group, ..., Any]] = list(module_app_commands.values())
 
         return new_cls
 
@@ -67,7 +67,7 @@ class Module(metaclass=ModuleMeta):
     This is meant to be a lightweight form of discordpy's Cogs.
     """
 
-    __app_commands__: List[app_commands.Command[Self, ..., Any]]
+    __app_commands__: List[app_commands.Command[app_commands.Group, ..., Any]]
     __is_app_command_group__: ClassVar[bool] = False
     __app_commands_group__: Optional[app_commands.Group]
     __group_name__: str
