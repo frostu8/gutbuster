@@ -14,6 +14,7 @@ from gutbuster.servers import (
 import discord
 import asyncio
 import math
+import logging
 from copy import copy
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -24,6 +25,8 @@ from discord.ui.separator import SeparatorSpacing
 from typing import Optional, List
 from bot.app import GroupModule
 from bot.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class ServerContainer(ui.Container):
@@ -308,4 +311,9 @@ class ServersModule(
     @tasks.loop(seconds=30.0)
     async def knock_servers(self) -> None:
         for server in self.watcher.iter():
-            await server.knock()
+            try:
+                await server.knock()
+            except Exception as e:
+                # Catch any exceptions
+                logger.error(e)
+
