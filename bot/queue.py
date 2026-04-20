@@ -344,7 +344,10 @@ class QueueModule(Module):
             event,
             self.watcher,
         )
+
         await view.update()
+        if view.has_realtime:
+            view.realtime()
         await channel.send(view=view, allowed_mentions=AllowedMentions.none())
 
     async def start_event(
