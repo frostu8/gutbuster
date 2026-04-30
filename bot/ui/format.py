@@ -322,7 +322,8 @@ class FormatVote(ui.LayoutView):
             await view.update()
             if view.has_realtime:
                 view.realtime()
-            await self.message.channel.send(
+
+            view.message = await self.message.channel.send(
                 view=view,
                 allowed_mentions=AllowedMentions.none()
             )

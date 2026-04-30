@@ -348,7 +348,8 @@ class QueueModule(Module):
         await view.update()
         if view.has_realtime:
             view.realtime()
-        await channel.send(view=view, allowed_mentions=AllowedMentions.none())
+
+        view.message = await channel.send(view=view, allowed_mentions=AllowedMentions.none())
 
     async def start_event(
         self,
