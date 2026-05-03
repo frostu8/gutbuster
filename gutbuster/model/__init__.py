@@ -1,5 +1,6 @@
 from .user import User, get_or_create_user, get_user
-from .room import EventFormat, FormatSelectMode, Room, create_room, get_room
+from .room import Room, create_room, get_room
+from .format import FormatSelectMode, TeamMode, EventFormat
 from .event import (
     Event,
     EventStatus,
@@ -22,6 +23,7 @@ __all__ = [
     "get_user",
     "EventFormat",
     "FormatSelectMode",
+    "TeamMode",
     "Room",
     "create_room",
     "get_room",

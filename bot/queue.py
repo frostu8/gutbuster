@@ -1,3 +1,4 @@
+from gutbuster.model.guild import get_guild
 from copy import copy
 from math import floor, ceil
 from dataclasses import dataclass
@@ -113,7 +114,11 @@ class UserActivity:
                     return
 
                 # Get active events and filter
-                events = await get_active_events_for(user, conn)
+                guild = await get_guild(self.channel.guild, conn)
+                if guild is None:
+                    # If the guild doesn't exist, there isn't anything setup.
+                    return
+                events = await get_active_events_for(guild, user, conn)
 
                 try:
                     event = next(e for e in events if e.room.channel.id == self.channel.id)
@@ -149,7 +154,11 @@ class UserActivity:
                 return
 
             # Get active events and filter
-            events = await get_active_events_for(user, conn)
+            guild = await get_guild(self.channel.guild, conn)
+            if guild is None:
+                # If the guild doesn't exist, there isn't anything setup.
+                return
+            events = await get_active_events_for(guild, user, conn)
 
             try:
                 event = next(e for e in events if e.room.channel.id == self.channel.id)
@@ -310,7 +319,7 @@ class QueueModule(Module):
         # First, make sure we even have the formats
         await event.room.preload_formats(conn)
 
-        formats = copy(event.room.formats)
+        formats = copy(event.room.formats or [])
         random.shuffle(formats)
 
         assert len(formats) > 0, "Room formats must not be empty"
@@ -362,6 +371,8 @@ class QueueModule(Module):
         Starts an event, notifying all waiting players.
         """
 
+        guild = event.room.guild
+
         # Set the started flag in the DB
         await event.set_status(EventStatus.STARTED, conn)
 
@@ -389,7 +400,7 @@ class QueueModule(Module):
         # Uncan all participants from other mogis
         uncanned: Dict[int, List[User]] = {}
         for p in event.get_participants():
-            canned_events = await get_active_events_for(p.user, conn)
+            canned_events = await get_active_events_for(guild, p.user, conn)
 
             for canned in canned_events:
                 # Don't uncan from our own event
@@ -450,6 +461,7 @@ class QueueModule(Module):
         """
 
         assert self.command_drop
+        assert interaction.guild
 
         if not isinstance(interaction.channel, TextChannel):
             # Ignore any user commands
@@ -458,6 +470,15 @@ class QueueModule(Module):
         name = interaction.user.display_name
 
         async with self.db.connect() as conn:
+            # Get the guild
+            guild = await get_guild(interaction.guild, conn)
+            if guild is None:
+                await interaction.response.send_message(
+                    "This channel isn't set up for mogis!\nTry /c'ing somewhere else.",
+                    ephemeral=True,
+                )
+                return
+
             # Fetch the user from the database
             user = await get_or_create_user(interaction.user, conn)
             await conn.commit()
@@ -472,7 +493,7 @@ class QueueModule(Module):
                 return
 
             # We can't host a Mogi here if there are no formats!
-            if len(room.formats) == 0:
+            if room.formats is None or len(room.formats) == 0:
                 await interaction.response.send_message(
                     "This channel has no formats to run mogis on! (This may be a misconfiguraton, try asking)\nTry /c'ing somewhere else.",
                     ephemeral=True,
@@ -481,7 +502,7 @@ class QueueModule(Module):
 
             # If the player is already assigned a team in a started mogi, they
             # shouldn't be able to join another
-            active_events = await get_active_events_for(user, conn)
+            active_events = await get_active_events_for(guild, user, conn)
             for event in active_events:
                 await event.preload_participants(conn)
 
@@ -597,6 +618,7 @@ class QueueModule(Module):
         """
 
         assert self.command_can
+        assert interaction.guild
 
         if not isinstance(interaction.channel, TextChannel):
             # Ignore any user commands
@@ -605,11 +627,20 @@ class QueueModule(Module):
         name = interaction.user.display_name
 
         async with self.db.connect() as conn:
+            # Get the guild
+            guild = await get_guild(interaction.guild, conn)
+            if guild is None:
+                await interaction.response.send_message(
+                    "This channel isn't set up for mogis!\nTry /c'ing somewhere else.",
+                    ephemeral=True,
+                )
+                return
+            
             # Fetch the user from the database
             user = await get_or_create_user(interaction.user, conn)
             await conn.commit()
 
-            events = await get_active_events_for(user, conn)
+            events = await get_active_events_for(guild, user, conn)
             for event in events:
                 await event.preload_participants(conn)
                 if event.is_user_playing(user):
@@ -696,13 +727,24 @@ class QueueModule(Module):
         Lists all gathering and started mogis in the server.
         """
 
+        assert interaction.guild
+
         if not isinstance(interaction.channel, TextChannel):
             # Ignore any user commands
             raise ValueError("Command not being called in a guild context?")
 
         async with self.db.connect() as conn:
+            # Get the guild
+            guild = await get_guild(interaction.guild, conn)
+            if guild is None:
+                await interaction.response.send_message(
+                    "This channel isn't set up for mogis!\nTry /c'ing somewhere else.",
+                    ephemeral=True,
+                )
+                return
+
             # Find all events in a guild, and preload participants
-            events = await get_active_events(interaction.channel.guild.id, conn)
+            events = await get_active_events(guild, conn)
             for event in events:
                 await event.preload_participants(conn)
 

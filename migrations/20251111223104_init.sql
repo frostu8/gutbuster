@@ -23,14 +23,10 @@ CREATE TABLE user (
     updated_at TIMESTAMP NOT NULL
 );
 
--- Eachh Discord guild has a global config.
+-- Each Discord guild has a global config.
 CREATE TABLE guild (
     id INTEGER PRIMARY KEY,
     discord_guild_id BIGINT NOT NULL UNIQUE,
-    -- The guild's server status channel
-    server_board_channel_id BIGINT,
-    -- The message in the server board used to update server statuses
-    server_board_message_id BIGINT,
     -- Below are the default settings for each room.
     -- See the "room" table for more info
     players_required INTEGER NOT NULL DEFAULT 8,
@@ -40,12 +36,21 @@ CREATE TABLE guild (
     updated_at TIMESTAMP NOT NULL
 );
 
+CREATE TABLE persistent_status (
+    id INTEGER PRIMARY KEY,
+    guild_id INTEGER NOT NULL UNIQUE REFERENCES guild(id),
+    discord_channel_id BIGINT NOT NULL UNIQUE,
+    discord_message_id BIGINT,
+    inserted_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+
 -- Each Discord channel can be host to a single Mogi room.
 CREATE TABLE room (
     id INTEGER PRIMARY KEY,
+    guild_id INTEGER NOT NULL REFERENCES guild(id),
     -- The discord ID of the channel.
     discord_channel_id BIGINT NOT NULL UNIQUE,
-    discord_guild_id BIGINT NOT NULL,
     -- If Mogis can be played in this room.
     -- There isn't any reason for this to be false, but it's useful for
     -- querying

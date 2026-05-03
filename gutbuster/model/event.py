@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 from .room import Room, EventFormat, get_room, FormatSelectMode, TeamMode
 from .user import User
+from .guild import Guild
 
 logger = logging.getLogger(__name__)
 
@@ -441,7 +442,7 @@ async def create_event(room: Room, conn: AsyncConnection) -> Event:
     event.participants = []
     return event
 
-async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[Event]:
+async def get_active_events_for(guild: Guild, user: User, conn: AsyncConnection) -> Sequence[Event]:
     """
     Gets all joined, active events for a specific user.
     """
@@ -451,7 +452,6 @@ async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[E
         SELECT
             e.*,
             r.discord_channel_id,
-            r.discord_guild_id,
             r.enabled AS room_enabled,
             r.players_required,
             r.format_selection_mode,
@@ -467,11 +467,12 @@ async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[E
         ON e.format_id = f.id
         WHERE
             e.room_id = r.id
+            AND r.guild_id = :guild_id
             AND p.event_id = e.id
             AND p.user_id = :user_id
             AND (e.status = 0 OR e.status = 1)
         """),
-        {"user_id": user.id}
+        {"user_id": user.id, "guild_id": guild.id}
     )
 
     events = []
@@ -479,7 +480,7 @@ async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[E
         # Build the room
         room = Room(
             id=row.room_id,
-            discord_guild_id=row.discord_guild_id,
+            guild=guild,
             channel=discord.Object(row.discord_channel_id),
             enabled=row.room_enabled,
             players_required=row.players_required,
@@ -510,7 +511,7 @@ async def get_active_events_for(user: User, conn: AsyncConnection) -> Sequence[E
     return events
 
 
-async def get_active_events(guild_id: int, conn: AsyncConnection) -> Sequence[Event]:
+async def get_active_events(guild: Guild, conn: AsyncConnection) -> Sequence[Event]:
     """
     Gets all active mogis in a guild.
     """
@@ -520,7 +521,6 @@ async def get_active_events(guild_id: int, conn: AsyncConnection) -> Sequence[Ev
         SELECT
             e.*,
             r.discord_channel_id,
-            r.discord_guild_id,
             r.enabled AS room_enabled,
             r.players_required,
             r.format_selection_mode,
@@ -536,10 +536,10 @@ async def get_active_events(guild_id: int, conn: AsyncConnection) -> Sequence[Ev
         ON e.format_id = f.id
         WHERE
             e.room_id = r.id
-            AND r.discord_guild_id = :guild_id
+            AND r.guild_id = :guild_id
             AND (e.status = 0 OR e.status = 1)
         """),
-        {"guild_id": guild_id}
+        {"guild_id": guild.id}
     )
 
     events = []
@@ -547,7 +547,7 @@ async def get_active_events(guild_id: int, conn: AsyncConnection) -> Sequence[Ev
         # Build the room
         room = Room(
             id=row.room_id,
-            discord_guild_id=row.discord_guild_id,
+            guild=guild,
             channel=discord.Object(row.discord_channel_id),
             enabled=row.room_enabled,
             players_required=row.players_required,
@@ -578,7 +578,7 @@ async def get_active_events(guild_id: int, conn: AsyncConnection) -> Sequence[Ev
     return events
 
 
-async def get_event(id: int, conn: AsyncConnection) -> Event:
+async def get_event(id: int, conn: AsyncConnection, client: discord.Client) -> Event:
     """
     Gets an existing event.
 
@@ -606,8 +606,14 @@ async def get_event(id: int, conn: AsyncConnection) -> Event:
     inserted_at = datetime.datetime.fromisoformat(row.inserted_at)
     updated_at = datetime.datetime.fromisoformat(row.updated_at)
 
+    channel = client.get_channel(row.discord_channel_id)
+    if channel is None:
+        channel = client.fetch_channel(row.discord_channel_id)
+    if not isinstance(channel, discord.TextChannel):
+        raise ValueError("Expected guild channel")
+
     # Fetch the parent room
-    room = await get_room(discord.Object(row.discord_channel_id), conn)
+    room = await get_room(channel, conn)
     if room is None:
         raise ValueError(f"parent room {row.discord_channel_id} does not exist")
 

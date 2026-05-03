@@ -177,7 +177,7 @@ class QueueStatus(ui.LayoutView):
         super().__init__(timeout=timeout)
 
         # Find server attached to event
-        guild = discord.Object(id=event.room.discord_guild_id)
+        guild = event.room.guild.guild
         try:
             server = next(filter(lambda s: s.remote == event.remote, servers.iter(guild)))
         except StopIteration:

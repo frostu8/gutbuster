@@ -1,3 +1,4 @@
+from gutbuster.model.guild import get_guild
 from gutbuster.servers import ServerWatcher
 from bot.config import Config
 import random
@@ -230,7 +231,7 @@ class FormatVote(ui.LayoutView):
 
         self.timeout_time = datetime.now() + timedelta(seconds=timeout)
 
-        for _, format in enumerate(event.room.formats):
+        for _, format in enumerate(event.room.formats or []):
             view = VoteEntry(self.client, self.db, format, self.vote, votes_needed=self.votes_needed)
             self.formats.append(view)
             self.container.add_item(view)
@@ -299,7 +300,7 @@ class FormatVote(ui.LayoutView):
         # Commit the format selection
         async with self.db.connect() as conn:
             # In case the event was updated while we were waiting for voting
-            self.event = await get_event(self.event.id, conn)
+            self.event = await get_event(self.event.id, conn, self.client)
             await self.event.set_format(self.selected_format, conn)
 
             # Find server for queue

@@ -5,100 +5,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
-from .server import Server
-
-
-@unique
-class FormatSelectMode(Enum):
-    """
-    How to select formats in an event.
-    """
-    VOTE = 0
-    RANDOM = 1
-
-
-@unique
-class TeamMode(Enum):
-    """
-    How to assign teams to players after the mogi has gathered.
-    """
-    FREE_FOR_ALL = 0
-    TWO_TEAMS = 2
-    THREE_TEAMS = 3
-    FOUR_TEAMS = 4
-
-    def has_equal_teams(self, player_count: int) -> bool:
-        """
-        Given a player count `player_count`, will the teams have equal players?
-        Returs `true` if they will have equal players.
-        """
-
-        match self:
-            case TeamMode.FREE_FOR_ALL:
-                # Free for all will always have equal teams
-                return True
-            case (
-                TeamMode.TWO_TEAMS
-                | TeamMode.THREE_TEAMS
-                | TeamMode.FOUR_TEAMS
-            ):
-                team_count = self.value
-                return player_count % team_count == 0
-            case _:
-                return False
-
-
-@dataclass
-class EventFormat(object):
-    """
-    An event format
-    """
-
-    id: int
-    name: str = field(kw_only=True)
-    team_mode: TeamMode = field(kw_only=True)
-
-    async def find_server(self, conn: AsyncConnection) -> Optional[Server]:
-        """
-        Finds an available server to host the event.
-
-        This automatically updates the event's remote with the server, and
-        returns the found server.
-        """
-
-        res = await conn.execute(
-            text("""
-            SELECT s.*
-            FROM event_format ef, event_format_server relation, server s
-            WHERE
-                ef.id = relation.event_format_id
-                AND s.id = relation.server_id
-                AND ef.id = :format_id
-                AND s.remote NOT IN (
-                    SELECT s.remote
-                    FROM server s, event e
-                    WHERE
-                    e.remote = s.remote
-                    AND (e.status = 0 OR e.status = 1)
-                )
-            ORDER BY s.inserted_at ASC
-            LIMIT 1
-            """),
-            {"format_id": self.id}
-        )
-
-        row = res.first()
-        if row is None:
-            return None
-        
-        return Server(
-            id=row.id,
-            discord_guild_id=row.discord_guild_id,
-            remote=row.remote,
-            label=row.label,
-            inserted_at=row.inserted_at,
-            updated_at=row.updated_at,
-        )
+from .format import FormatSelectMode, TeamMode, EventFormat
+from .guild import Guild, create_guild, get_guild
 
 
 @dataclass(kw_only=True)
@@ -110,7 +18,7 @@ class Room(object):
     """
 
     id: int
-    discord_guild_id: int
+    guild: Guild
     channel: discord.TextChannel | discord.Object
     enabled: bool = field(default=True)
     players_required: int = field(default=8)
@@ -119,14 +27,17 @@ class Room(object):
     # TODO add to config
     inactivity_warning_after: int = field(default=1500)
     inactivity_drop_after: int = field(default=2100)
-    formats: List[EventFormat] = field(default_factory=lambda: [])
+    formats: Optional[List[EventFormat]] = field(default=None)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
 
-    async def preload_formats(self, conn: AsyncConnection):
+    async def preload_formats(self, conn: AsyncConnection) -> List[EventFormat]:
         """
         Loads the list of formats the room supports.
         """
+
+        if self.formats is not None:
+            return self.formats
 
         res = await conn.execute(
             text("""
@@ -137,10 +48,12 @@ class Room(object):
             {"room_id": self.id},
         )
 
-        self.formats.clear()
+        self.formats = []
         for row in res:
             format = EventFormat(row.id, name=row.name, team_mode=TeamMode(row.team_mode))
             self.formats.append(format)
+
+        return self.formats
 
     async def add_format(
         self,
@@ -152,6 +65,11 @@ class Room(object):
         """
         Adds a format to the room.
         """
+
+        if self.formats is None:
+            format_list = await self.preload_formats(conn)
+        else:
+            format_list = self.formats
 
         res = await conn.execute(
             text("""
@@ -167,7 +85,7 @@ class Room(object):
             raise ValueError("failed to get id of new row")
 
         format = EventFormat(row.id, name=name, team_mode=team_mode)
-        self.formats.append(format)
+        format_list.append(format)
         return format
 
     async def _set_enabled(self, enabled: bool, conn: AsyncConnection):
@@ -209,16 +127,21 @@ async def create_room(
     Creates a new room, initializing it with default settings.
     """
 
+    # Get or create the guild
+    guild = await get_guild(channel.guild, conn)
+    if guild is None:
+        guild = await create_guild(channel.guild, conn)
+
     # Initialize with default settings
     now = datetime.datetime.now()
 
     res = await conn.execute(
         text("""
-        INSERT INTO room (discord_guild_id, discord_channel_id, enabled, inserted_at, updated_at)
+        INSERT INTO room (guild_id, discord_channel_id, enabled, inserted_at, updated_at)
         VALUES (:guild_id, :channel_id, :enabled, :now, :now)
         RETURNING id
         """),
-        {"guild_id": channel.guild.id, "channel_id": channel.id, "enabled": enabled, "now": now.isoformat()},
+        {"guild_id": guild.id, "channel_id": channel.id, "enabled": enabled, "now": now.isoformat()},
     )
 
     row = res.first()
@@ -227,7 +150,7 @@ async def create_room(
 
     room = Room(
         id=row.id,
-        discord_guild_id=channel.guild.id,
+        guild=guild,
         channel=channel,
         enabled=enabled,
         inserted_at=now,
@@ -240,7 +163,7 @@ async def create_room(
 
 
 async def get_room(
-    channel: discord.TextChannel | discord.Object, conn: AsyncConnection
+    channel: discord.TextChannel, conn: AsyncConnection
 ) -> Optional[Room]:
     """
     Gets a room of a channel.
@@ -248,9 +171,15 @@ async def get_room(
     If no room exists, this returns `None`.
     """
 
+    # Get the guild
+    guild = await get_guild(channel.guild, conn)
+    if guild is None:
+        # If the guild hasn't been made, the room also does not exist
+        return None
+
     res = await conn.execute(
         text("""
-        SELECT id, discord_guild_id, enabled, players_required, format_selection_mode, votes_required, inserted_at, updated_at
+        SELECT id, enabled, players_required, format_selection_mode, votes_required, inserted_at, updated_at
         FROM room
         WHERE discord_channel_id = :id
         """),
@@ -263,7 +192,7 @@ async def get_room(
 
     room = Room(
         id=row.id,
-        discord_guild_id=row.discord_guild_id,
+        guild=guild,
         channel=channel,
         enabled=row.enabled,
         players_required=row.players_required,
