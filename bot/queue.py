@@ -664,13 +664,9 @@ class QueueModule(Module):
 
             # Get the currently active event
             event = await get_current_event(room, conn)
-            if event is None:
-                interaction.response.send_message(
-                    "Nobody's in here! Why not get it started?",
-                )
-                return
-
-            participants = event.get_participants()
+            participants = []
+            if event is not None:
+                participants = event.participants or []
 
             # Build the mogi list
             message = "**Mogi List**"
