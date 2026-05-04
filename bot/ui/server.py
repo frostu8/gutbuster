@@ -37,7 +37,6 @@ class ServerContainer(ui.Container):
 
     async def _wait_until_update(self) -> None:
         await self.server.update_event.wait()
-        self.regenerate()
 
     def regenerate(self) -> None:
         """
@@ -116,10 +115,14 @@ class ServerView(ui.LayoutView):
     message: Optional[discord.Message]
     containers: List[ServerContainer]
 
+    db: AsyncEngine
+
     _task: Optional[Task[None]]
 
-    def __init__(self, config: Config, *servers: WatchedServer, timeout: Optional[int | float] = 1800):
+    def __init__(self, config: Config, db: AsyncEngine, *servers: WatchedServer, timeout: Optional[int | float] = 1800):
         super().__init__(timeout=timeout)
+
+        self.db = db
 
         self.message = None
         self.containers = []
@@ -131,14 +134,21 @@ class ServerView(ui.LayoutView):
         self._task = None
 
     def stop(self) -> None:
-        if self._task is not None and not self._task.done:
+        super().stop()
+
+        if self._task is not None and not self._task.done():
             # Cancel task
             self._task.cancel()
 
     async def _realtime(self) -> None:
         while True:
             futures = (container._wait_until_update() for container in self.containers)
-            await next(asyncio.as_completed(futures))
+            await asyncio.gather(*futures)
+
+            async with self.db.connect() as conn:
+                for container in self.containers:
+                    await container.server.inner.refetch(conn)
+                    container.regenerate()
 
             # Update message
             if self.message is not None:
@@ -154,7 +164,7 @@ class ServerView(ui.LayoutView):
         existence.
         """
 
-        if self._task is not None and not self._task.done:
+        if self._task is not None and not self._task.done():
             # Cancel task
             self._task.cancel()
 
@@ -170,7 +180,6 @@ class PersistentServerView(ServerView):
     A servers view that persists on restarts.
     """
 
-    db: AsyncEngine
     watcher: ServerWatcher
     config: Config
     
@@ -179,11 +188,11 @@ class PersistentServerView(ServerView):
     channel: Optional[discord.TextChannel]
 
     def __init__(self, obj: PersistentStatus, config: Config, watcher: ServerWatcher, db: AsyncEngine, timeout: Optional[int | float] = None):
-        super().__init__(config, timeout=timeout)
+        super().__init__(config, db, timeout=timeout)
         self.obj = obj
         self.config = config
         self.watcher = watcher
-        self.db = db
+
         self.channel = None
 
     async def _fetch_channel(self, client: discord.Client) -> discord.TextChannel:
@@ -212,6 +221,12 @@ class PersistentServerView(ServerView):
             await conn.commit()
 
     async def update(self) -> None:
+        is_realtime = False
+        if self._task is not None and not self._task.done():
+            # Cancel task
+            self._task.cancel()
+            is_realtime = True
+
         self.clear_items()
         self.containers.clear()
         for server in self.watcher.iter(self.obj.parent):
@@ -227,5 +242,5 @@ class PersistentServerView(ServerView):
                 self.stop()
 
         # Restart realtime task
-        if self._task is not None:
+        if is_realtime:
             self.realtime()

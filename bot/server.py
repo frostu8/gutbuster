@@ -106,12 +106,13 @@ class ServerModule(
                 )
                 view.message = message
                 view.channel = channel
-                await view.update()
-                view.realtime()
-
                 self.pinned_views.append(view)
 
             await conn.commit()
+
+        for view in self.pinned_views:
+            await view.update()
+            view.realtime()
 
     @app_commands.command(name="add", description="Adds a server to Gutbuster")
     @app_commands.describe(ip="The ip of the server")
@@ -159,7 +160,7 @@ class ServerModule(
                 except IntegrityError:
                     pass
 
-        view = ServerView(self.config, server)
+        view = ServerView(self.config, self.db, server)
         view.message = await interaction.followup.send(view=view)
         view.realtime()
 
@@ -247,7 +248,7 @@ class ServerModule(
             )
             return
 
-        view = ServerView(self.config, *servers)
+        view = ServerView(self.config, self.db, *servers)
         view.message = (await interaction.response.send_message(view=view)).resource
         view.realtime()
 
@@ -297,7 +298,7 @@ class ServerModule(
                 await conn.commit()
                 view = PersistentServerView(obj, self.config, self.watcher, self.db)
 
-            view.update()
+            await view.update()
             await view.send(interaction.client)
             view.realtime()
 

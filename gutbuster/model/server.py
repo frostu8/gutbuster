@@ -34,6 +34,26 @@ class Server:
 
         self.label = label
 
+    async def refetch(self, conn: AsyncConnection) -> None:
+        """
+        Refetches the server data.
+        """
+
+        res = await conn.execute(
+            text("""
+            SELECT label
+            FROM server
+            WHERE id = :id
+            """),
+            {"id": self.id}
+        )
+
+        row = res.first()
+        if row is None:
+            raise ValueError("Server deleted")
+
+        self.label = row.label
+
     async def delete(self, conn: AsyncConnection) -> None:
         """
         Deletes this server from the database.
