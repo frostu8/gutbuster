@@ -1,16 +1,3 @@
--- Server list
-CREATE TABLE server (
-    id INTEGER PRIMARY KEY,
-    discord_guild_id BIGINT NOT NULL,
-    remote VARCHAR(255) NOT NULL,
-    label VARCHAR(255),
-    description VARCHAR(255),
-    inserted_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-
-    UNIQUE (discord_guild_id, label)
-);
-
 -- We need to store some basic information about users
 -- In Duel Channel, MMR is tied to your player profile, but here it should be
 -- tied to your Discord user.
@@ -43,6 +30,19 @@ CREATE TABLE persistent_status (
     discord_message_id BIGINT,
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
+);
+
+-- Server list
+CREATE TABLE server (
+    id INTEGER PRIMARY KEY,
+    guild_id INTEGER NOT NULL REFERENCES guild(id),
+    remote VARCHAR(255) NOT NULL,
+    label VARCHAR(255),
+    description VARCHAR(255),
+    inserted_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+
+    UNIQUE (guild_id, label)
 );
 
 -- Each Discord channel can be host to a single Mogi room.

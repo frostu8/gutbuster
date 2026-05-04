@@ -1,3 +1,4 @@
+from gutbuster.model import Guild
 from .server import Server
 from .packet import ServerInfo, PlayerInfo
 from typing import List, Dict, Optional, Generator, Tuple
@@ -28,8 +29,8 @@ class WatchedServer(Server):
         return self.inner.id
 
     @property
-    def discord_guild_id(self):
-        return self.inner.discord_guild_id
+    def guild(self):
+        return self.inner.guild
 
     async def set_label(self, label: str, conn: AsyncConnection) -> None:
         await self.inner.set_label(label, conn)
@@ -64,10 +65,11 @@ class ServerWatcher:
     def _append(self, server: WatchedServer) -> None:
         self.servers[server.id] = server
 
-        if server.discord_guild_id in self.servers_by_guild.keys():
-            self.servers_by_guild[server.discord_guild_id].append(server)
+        guild_id = server.guild.id
+        if guild_id in self.servers_by_guild.keys():
+            self.servers_by_guild[guild_id].append(server)
         else:
-            self.servers_by_guild[server.discord_guild_id] = [server]
+            self.servers_by_guild[guild_id] = [server]
 
     async def knock(self) -> None:
         """
@@ -79,7 +81,7 @@ class ServerWatcher:
 
     async def add(
         self,
-        guild: discord.Guild | discord.Object,
+        guild: Guild,
         remote: str,
         *,
         label: Optional[str] = None,
@@ -97,7 +99,7 @@ class ServerWatcher:
         return server
 
     def iter(
-        self, guild: Optional[discord.Guild | discord.Object] = None
+        self, guild: Optional[Guild] = None
     ) -> Generator[WatchedServer, None, None]:
         """
         Iterates over all servers attached to a guild.
@@ -127,8 +129,8 @@ class ServerWatcher:
             await conn.commit()
 
         # Remove from guild list
-        if server.discord_guild_id in self.servers_by_guild:
-            servers = self.servers_by_guild[server.discord_guild_id]
+        if server.guild.id in self.servers_by_guild:
+            servers = self.servers_by_guild[server.guild.id]
             servers.remove(server)
 
     async def load(self) -> None:

@@ -6,7 +6,7 @@ from bot.config import load as load_config
 from bot.room import RoomModule
 import discord
 from gutbuster.servers import ServerWatcher
-from bot.servers import ServersModule
+from bot.server import ServerModule
 from sqlalchemy.ext.asyncio import create_async_engine
 from dotenv import load_dotenv
 import logging
@@ -29,7 +29,7 @@ app = App(intents=intents)
 # Load room commands
 app.add_module(RoomModule(db))
 app.add_module(QueueModule(config, watcher, app, db))
-app.add_module(ServersModule(config, db, watcher))
+app.add_module(ServerModule(config, db, watcher, app))
 
 
 # Fetch our token

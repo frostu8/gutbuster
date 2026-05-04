@@ -608,7 +608,7 @@ async def get_event(id: int, conn: AsyncConnection, client: discord.Client) -> E
 
     channel = client.get_channel(row.discord_channel_id)
     if channel is None:
-        channel = client.fetch_channel(row.discord_channel_id)
+        channel = await client.fetch_channel(row.discord_channel_id)
     if not isinstance(channel, discord.TextChannel):
         raise ValueError("Expected guild channel")
 

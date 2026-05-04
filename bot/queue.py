@@ -13,11 +13,11 @@ from gutbuster.model import (
     Event,
     get_event,
     get_active_events_for,
-    Participant, Room, get_current_event, get_active_events, FormatSelectMode,
+    Participant, Room, get_current_event, get_active_events, FormatSelectMode, find_server,
 )
 from gutbuster.servers import ServerWatcher
 
-from bot.servers import ServersModule
+from bot.server import ServerModule
 from bot.config import load as load_config, Config
 from bot.app import Module
 from bot.ui import FormatSelector, FormatVote, QueueStatus
@@ -329,7 +329,7 @@ class QueueModule(Module):
         await event.set_format(selected_format, conn)
 
         # Find server for queue
-        server = await selected_format.find_server(conn)
+        server = await find_server(selected_format, conn)
         if server is not None:
             await event.set_remote(server.remote, conn)
 

@@ -6,7 +6,7 @@ import math
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncEngine
 from typing import Callable, Awaitable, Any, List, Optional
-from gutbuster.model import EventFormat, User, Event, get_event, get_user
+from gutbuster.model import EventFormat, User, Event, get_event, get_user, find_server
 from discord import ui, ButtonStyle, AllowedMentions
 import discord
 from .queue import QueueStatus
@@ -304,7 +304,7 @@ class FormatVote(ui.LayoutView):
             await self.event.set_format(self.selected_format, conn)
 
             # Find server for queue
-            server = await self.selected_format.find_server(conn)
+            server = await find_server(self.selected_format, conn)
             if server is not None:
                 await self.event.set_remote(server.remote, conn)
 

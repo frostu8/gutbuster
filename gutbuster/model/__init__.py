@@ -11,13 +11,25 @@ from .event import (
     get_current_event,
     get_active_events_for,
 )
+from .guild import (
+    Guild,
+    get_guild,
+    create_guild,
+    list_all_boards,
+)
 from .server import (
     Server,
     create_server,
-    get_all_servers
+    get_all_servers,
+    find_server,
 )
 
 __all__ = [
+    "Guild",
+    "get_guild",
+    "create_guild",
+    "find_server",
+    "list_all_boards",
     "User",
     "get_or_create_user",
     "get_user",

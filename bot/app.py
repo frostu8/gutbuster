@@ -120,6 +120,13 @@ class Module(metaclass=ModuleMeta):
 
         pass
 
+    def on_ready(self) -> None | Awaitable[None]:
+        """
+        Called when a connection is established to the gateway.
+        """
+
+        pass
+
     def on_message(self, message: discord.Message) -> None | Awaitable[None]:
         """
         Called when a message is received over the gateway
@@ -180,6 +187,12 @@ class App(discord.Client):
 
     async def on_ready(self) -> None:
         logger.info(f"Logged in as {self.user}")
+
+        for module in self.modules:
+            if inspect.iscoroutinefunction(module.on_ready):
+                await module.on_ready()
+            else:
+                module.on_ready()
 
     async def on_message(self, message: discord.Message) -> None:
         for module in self.modules:

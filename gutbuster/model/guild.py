@@ -20,6 +20,38 @@ class PersistentStatus(object):
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
 
+    async def set_message(self, message: discord.Message, conn: AsyncConnection):
+        """
+        Sets the message associated with the persistent status.
+
+        On restarts, the bot will update this.
+        """
+
+        now = datetime.datetime.now()
+        await conn.execute(
+            text("""
+            UPDATE persistent_status
+            SET discord_message_id = :message_id, updated_at = :now
+            WHERE id = :id
+            """),
+            {"id": self.id, "message_id": message.id, "now": now.isoformat()},
+        )
+
+        self.message = message
+
+    async def delete(self, conn: AsyncConnection) -> None:
+        """
+        Deletes the status from the database.
+        """
+
+        await conn.execute(
+            text("""
+            DELETE FROM persistent_status
+            WHERE id = :id
+            """),
+            {"id": self.id},
+        )
+
 
 @dataclass(kw_only=True)
 class Guild(object):
@@ -53,7 +85,7 @@ class Guild(object):
 
         res = await conn.execute(
             text("""
-            SELECT id, guild_id, discord_channel_id, discord_message_id
+            SELECT id, guild_id, discord_channel_id, discord_message_id, inserted_at, updated_at
             FROM persistent_status
             WHERE guild_id = :id
             """),
@@ -66,7 +98,7 @@ class Guild(object):
                 id=row.id,
                 parent=self,
                 channel=discord.Object(row.discord_channel_id),
-                message=discord.Object(row.discord_message_id),
+                message=row.discord_message_id and discord.Object(row.discord_message_id),
                 inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
                 updated_at=datetime.datetime.fromisoformat(row.updated_at),
             )
@@ -177,3 +209,41 @@ async def get_guild(
         inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
         updated_at=datetime.datetime.fromisoformat(row.updated_at),
     )
+
+async def list_all_boards(conn: AsyncConnection) -> List[PersistentStatus]:
+    res = await conn.execute(
+        text("""
+        SELECT
+            pin.*,
+            g.discord_guild_id, g.players_required, g.format_selection_mode,
+            g.votes_required,
+            g.inserted_at AS guild_inserted_at,
+            g.updated_at AS guild_updated_at
+        FROM persistent_status pin, guild g
+        WHERE pin.guild_id = g.id
+        """),
+    )
+
+    pinned = []
+    for row in res:
+        guild = Guild(
+            id=row.guild_id,
+            guild=discord.Object(row.discord_guild_id),
+            players_required=row.players_required,
+            format_selection_mode=row.format_selection_mode,
+            votes_required=row.votes_required,
+            inserted_at=datetime.datetime.fromisoformat(row.guild_inserted_at),
+            updated_at=datetime.datetime.fromisoformat(row.guild_updated_at),
+        )
+
+        pin = PersistentStatus(
+            id=row.id,
+            parent=guild,
+            channel=discord.Object(row.discord_channel_id),
+            message=row.discord_message_id and discord.Object(row.discord_message_id),
+            inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
+            updated_at=datetime.datetime.fromisoformat(row.updated_at),
+        )
+        pinned.append(pin)
+
+    return pinned
