@@ -242,6 +242,8 @@ class QueueModule(Module):
     command_can: Optional[app_commands.AppCommand]
     command_drop: Optional[app_commands.AppCommand]
 
+    event_locks: Dict[int, asyncio.Lock]
+
     def __init__(self, config: Config, watcher: ServerWatcher, client: discord.Client, db: AsyncEngine):
         self.config = config
         self.watcher = watcher
@@ -251,6 +253,16 @@ class QueueModule(Module):
 
         self.command_can = None
         self.command_drop = None
+
+        self.event_locks = {}
+
+    def _get_lock(self, event: Event) -> asyncio.Lock:
+        if event.id in self.event_locks:
+            return self.event_locks[event.id]
+        else:
+            lock = asyncio.Lock()
+            self.event_locks[event.id] = lock
+            return lock
 
     async def on_setup(self, tree: app_commands.CommandTree):
         commands = await tree.fetch_commands()
@@ -508,8 +520,10 @@ class QueueModule(Module):
 
                 if event.is_user_playing(user):
                     channel = event.room.channel
-                    if isinstance(channel, discord.Object):
-                        channel = interaction.client.get_channel(channel.id)
+                    if not isinstance(channel, discord.TextChannel):
+                        channel = interaction.client.get_channel(event.room.channel.id)
+                    if not isinstance(channel, discord.TextChannel):
+                        channel = interaction.client.fetch_channel(event.room.channel.id)
 
                     assert isinstance(channel, discord.TextChannel), "Mogi in a non-guild context"
 
@@ -526,27 +540,28 @@ class QueueModule(Module):
                 # Users can create mogis by simply canning in a channel.
                 event = await create_event(room, conn)
 
-            if event.has(user):
-                await interaction.response.send_message(
-                    f"{name}, you're already in the queue.\nUse </d:{self.command_drop.id}> to drop from the queue.",
-                    ephemeral=True,
-                )
-            else:
-                await event.join(user, conn)
+            async with self._get_lock(event):
+                if event.has(user):
+                    await interaction.response.send_message(
+                        f"{name}, you're already in the queue.\nUse </d:{self.command_drop.id}> to drop from the queue.",
+                        ephemeral=True,
+                    )
+                else:
+                    await event.join(user, conn)
 
-                player_count = len(event.participants or [])
-                await interaction.response.send_message(
-                    f"{name} has joined the mogi -- {player_count} players\nUse </d:{self.command_drop.id}> to drop from the queue.",
-                )
+                    player_count = len(event.participants or [])
+                    await interaction.response.send_message(
+                        f"{name} has joined the mogi -- {player_count} players\nUse </d:{self.command_drop.id}> to drop from the queue.",
+                    )
 
-            # Check if the mogi has enough players to start
-            if (
-                event.status == EventStatus.LFG
-                and len(event.get_participants()) >= room.players_required
-            ):
-                await self.start_event(event, conn=conn, client=interaction.client)
+                # Check if the mogi has enough players to start
+                if (
+                    event.status == EventStatus.LFG
+                    and len(event.get_participants()) >= room.players_required
+                ):
+                    await self.start_event(event, conn=conn, client=interaction.client)
 
-            await conn.commit()
+                await conn.commit()
 
 
     @app_commands.command(name="d", description="Drop from the mogi")
@@ -586,12 +601,15 @@ class QueueModule(Module):
                     f"{name}, you're not in the queue.\nUse </c:{self.command_can.id}> to enter the queue.",
                     ephemeral=True,
                 )
-            else:
+                return
+
+            async with self._get_lock(event):
                 if event.is_user_playing(user):
                     # The player has already been assigned a team. They
                     # shouldn't be able to /d
                     await interaction.response.send_message(
-                        f"{name}, you are playing in this queue.\nYou must wait until the current mogi has ended.",
+                        f"{name}, you are playing in this queue.\n"
+                        "You must wait until the current mogi has ended.",
                         ephemeral=True,
                     )
                     return
@@ -600,13 +618,14 @@ class QueueModule(Module):
 
                 player_count = len(event.get_participants())
                 await interaction.response.send_message(
-                    f"{name} has dropped from the mogi -- {player_count} players\nUse </c:{self.command_can.id}> to enter the queue.",
+                    f"{name} has dropped from the mogi -- {player_count} players\n"
+                    f"Use </c:{self.command_can.id}> to enter the queue.",
                 )
 
                 if len(event.get_participants()) == 0:
                     await event.delete(conn)
 
-            await conn.commit()
+                await conn.commit()
 
 
     @app_commands.command(name="da", description="Drop from all joined mogis")
@@ -642,30 +661,31 @@ class QueueModule(Module):
 
             events = await get_active_events_for(guild, user, conn)
             for event in events:
-                await event.preload_participants(conn)
-                if event.is_user_playing(user):
-                    # Skip any started mogis, as the user cannot leave them
-                    continue
+                async with self._get_lock(event):
+                    await event.preload_participants(conn)
+                    if event.is_user_playing(user):
+                        # Skip any started mogis, as the user cannot leave them
+                        continue
 
-                # Leave the event
-                await event.leave(user, conn)
+                    # Leave the event
+                    await event.leave(user, conn)
 
-                channel = event.room.channel
-                if isinstance(channel, discord.Object):
-                    channel = interaction.client.get_channel(channel.id)
+                    channel = event.room.channel
+                    if isinstance(channel, discord.Object):
+                        channel = interaction.client.get_channel(channel.id)
 
-                if channel is None or not isinstance(channel, discord.TextChannel):
-                    raise ValueError("Failed to get room channel")
+                    if channel is None or not isinstance(channel, discord.TextChannel):
+                        raise ValueError("Failed to get room channel")
 
-                player_count = len(event.get_participants())
-                await channel.send(
-                    f"{name} has dropped from the mogi -- {player_count} players\nUse </c:{self.command_can.id}> to enter the queue.",
-                )
+                    player_count = len(event.get_participants())
+                    await channel.send(
+                        f"{name} has dropped from the mogi -- {player_count} players\nUse </c:{self.command_can.id}> to enter the queue.",
+                    )
 
-                if len(event.get_participants()) == 0:
-                    await event.delete(conn)
+                    if len(event.get_participants()) == 0:
+                        await event.delete(conn)
+                    await conn.commit()
 
-            await conn.commit()
             await interaction.response.send_message(
                 f"You have been dropped from {len(events)} mogis.", ephemeral=True
             )
@@ -828,38 +848,39 @@ class QueueModule(Module):
                 return
 
             # TODO: magic number
-            rot_time = event.inserted_at + timedelta(minutes=50)
+            async with self._get_lock(event):
+                rot_time = event.inserted_at + timedelta(minutes=50)
 
-            now = datetime.now()
-            rotted = now >= rot_time
+                now = datetime.now()
+                rotted = now >= rot_time
 
-            # Check if the user is trying to end a queue in LFG phase
-            if (
-                event.status == EventStatus.LFG
-                and not rotted
-            ):
-                await interaction.response.send_message(
-                    "The mogi queue may be cleared"
-                    f" <t:{math.trunc(rot_time.timestamp())}:R>.",
-                    ephemeral=True,
-                )
-                return
+                # Check if the user is trying to end a queue in LFG phase
+                if (
+                    event.status == EventStatus.LFG
+                    and not rotted
+                ):
+                    await interaction.response.send_message(
+                        "The mogi queue may be cleared"
+                        f" <t:{math.trunc(rot_time.timestamp())}:R>.",
+                        ephemeral=True,
+                    )
+                    return
 
-            # Check if the mogi has "started," but the format hasn't been
-            # determined.
-            if (
-                event.status == EventStatus.STARTED
-                and event.format is None
-            ):
-                await interaction.response.send_message(
-                    "A vote is being held to determine the format.",
-                    ephemeral=True,
-                )
-                return
+                # Check if the mogi has "started," but the format hasn't been
+                # determined.
+                if (
+                    event.status == EventStatus.STARTED
+                    and event.format is None
+                ):
+                    await interaction.response.send_message(
+                        "A vote is being held to determine the format.",
+                        ephemeral=True,
+                    )
+                    return
 
-            # Close the mogi
-            await event.set_status(EventStatus.ENDED, conn)
-            await conn.commit()
+                # Close the mogi
+                await event.set_status(EventStatus.ENDED, conn)
+                await conn.commit()
 
         await interaction.response.send_message(
             f"Mogi has been ended by {name}."
@@ -941,26 +962,27 @@ class QueueModule(Module):
                     ephemeral=True,
                 )
                 return
+            
+            async with self._get_lock(event):
+                await event.preload_participants(conn)
 
-            await event.preload_participants(conn)
+                # Find the given player
+                try:
+                    player = next(p for p in event.get_participants() if p.user.user.id == user.id)
+                except StopIteration:
+                    await interaction.response.send_message(
+                        f"Player {user.display_name} is not in the queue.",
+                        ephemeral=True,
+                    )
+                    return
 
-            # Find the given player
-            try:
-                player = next(p for p in event.get_participants() if p.user.user.id == user.id)
-            except StopIteration:
-                await interaction.response.send_message(
-                    f"Player {user.display_name} is not in the queue.",
-                    ephemeral=True,
-                )
-                return
+                # Remove the player
+                await event.leave(player.user, conn)
+                # Remove event if this removes the last player
+                if len(event.get_participants()) == 0:
+                    await event.delete(conn)
 
-            # Remove the player
-            await event.leave(player.user, conn)
-            # Remove event if this removes the last player
-            if len(event.get_participants()) == 0:
-                await event.delete(conn)
-
-            await conn.commit()
+                await conn.commit()
 
         await interaction.response.send_message(
             f"{user.mention} has been removed from the queue.",
