@@ -66,8 +66,8 @@ async def get_user(discord_user: Member, conn: AsyncConnection) -> User | None:
         await conn.execute(
             text("""
             UPDATE user
-            SET name = :name
-            WHERE id = :id, updated_at = :now
+            SET name = :name, updated_at = :now
+            WHERE id = :id
             """),
             {"id": id, "name": discord_user.name, "now": now.isoformat()},
         )
