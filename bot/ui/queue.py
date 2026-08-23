@@ -67,10 +67,10 @@ class QueueStatusContainer(ui.Container):
         self.clear_items()
         self.accent_color = self.color()
 
+        content = f"Code `{self.event.id}`\n"
+
         if self.event.format is not None:
-            content = f"Format __**{self.event.format.name}**__"
-        else:
-            content = ""
+            content += f"Format __**{self.event.format.name}**__"
 
         # List participants
         if self.event.format and self.event.format.team_mode == TeamMode.FFA:
