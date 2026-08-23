@@ -219,3 +219,6 @@ __marimo__/
 /*.sqlite
 /*.sqlite-wal
 /*.sqlite-shm
+
+# Config files
+/config.toml
