@@ -241,19 +241,23 @@ class RoomConfigModule(
             return
 
         # Apply config options
-        room = await self.db.update_room(
-            guild.id,
-            room.id,
-            options=UpdateRoomOptions(
-                decay_after=decay_after,
-                inactivity_warning_after=inactivity_warning_after,
-                inactivity_drop_after=inactivity_drop_after,
-                players_required=players_required,
-                max_players=max_players,
-                format_selection_mode=format_selection_mode,
-                votes_required=votes_required,
-            ),
-        )
+        options = UpdateRoomOptions()
+        if decay_after is not None:
+            options.decay_after = decay_after
+        if inactivity_warning_after is not None:
+            options.inactivity_warning_after = inactivity_warning_after
+        if inactivity_drop_after is not None:
+            options.inactivity_drop_after = inactivity_drop_after
+        if max_players is not None:
+            options.max_players = max_players
+        if players_required is not None:
+            options.players_required = players_required
+        if votes_required is not None:
+            options.votes_required = votes_required
+        if format_selection_mode is not None:
+            options.format_selection_mode = format_selection_mode
+
+        room = await self.db.update_room(guild.id, room.id, options=options)
 
         # Build up the config embed
         view = RoomConfigView(interaction.channel, room)

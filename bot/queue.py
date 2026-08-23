@@ -315,7 +315,7 @@ class QueueModule(Module):
         assert len(formats) > 0, "Room formats must not be empty"
         selected_format = formats.pop()
 
-        selected_server = await find_server(event, db=self.db)
+        selected_server = await find_server(event, format=selected_format, db=self.db)
 
         # Update event
         event = await self.db.update_event(
