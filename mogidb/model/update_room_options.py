@@ -24,7 +24,7 @@ class UpdateRoomOptions:
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         # Remove UNSET items
-        for key, item in d.items():
+        for key, item in list(d.items()):
             if isinstance(item, Unset):
                 d.pop(key)
 
