@@ -136,7 +136,10 @@ class RoomConfigContainer(ui.Container):
                 content += "\n**Servers**"
 
             for server in format.servers:
-                content += f"\n`{server.remote}` - {server.label}"
+                status_icon = "🔴"
+                if server.info is not None:
+                    status_icon = "🟢"
+                content += f"\n{status_icon} `{server.remote}` - {server.label}"
 
             self.add_item(ui.TextDisplay(content))
 
