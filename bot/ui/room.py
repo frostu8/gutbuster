@@ -136,7 +136,7 @@ class RoomConfigContainer(ui.Container):
                 content += "\n**Servers**"
 
             for server in format.servers:
-                content += f"`{server.remote}` - {server.label}"
+                content += f"\n`{server.remote}` - {server.label}"
 
             self.add_item(ui.TextDisplay(content))
 

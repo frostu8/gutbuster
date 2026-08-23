@@ -1,3 +1,4 @@
+from mogidb import Unset
 from enum import IntEnum
 
 import discord
@@ -41,6 +42,8 @@ class RoomModule(Module):
         if guild is None:
             guild = await self.db.create_guild(interaction.guild.id)
 
+        assert not isinstance(guild.servers, Unset)
+
         # Get the room
         room = await self.db.get_room(guild.id, interaction.channel.id)
         if room is None:
@@ -53,7 +56,10 @@ class RoomModule(Module):
                 # AHHH !!! FUCK!! WHY ISN'T IT ENABLED BY DEFAULT!!!
                 enabled=True,
             )
-            await self.db.create_event_format(guild.id, room.id, "FFA", TeamMode.FFA)
+
+            # let the ffa format use all the servers in the guild
+            servers = [server.id for server in guild.servers]
+            await self.db.create_event_format(guild.id, room.id, "FFA", TeamMode.FFA, servers)
 
             await interaction.response.send_message(
                 f"Channel {interaction.channel.mention} has been enabled and initialized to run mogis.\nFormat `FFA` automatically added.",
