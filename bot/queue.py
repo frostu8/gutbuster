@@ -594,7 +594,7 @@ class QueueModule(Module):
             )
             return
 
-        if event.is_playing(user):
+        if event.status != EventStatus.LFG and event.is_playing(user):
             # The player has already been assigned a team. They
             # shouldn't be able to /d
             await interaction.response.send_message(
