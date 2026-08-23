@@ -32,7 +32,7 @@ class Colors:
 class Config:
     messages: Messages
     colors: Colors = field(default_factory=lambda: Colors())
-    api_endpoint: str = "http://localhost:8000"
+    api_endpoint: str = "https://api.mogi.ringrace.rs"
 
     @classmethod
     def from_dict(cls, src: Mapping[str, Any]) -> Self:
