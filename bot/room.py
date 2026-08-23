@@ -14,8 +14,14 @@ from mogidb.model import FormatSelectionMode, TeamMode, UpdateRoomOptions
 class RoomModule(Module):
     db: mogidb.Client
 
+    command_enable: app_commands.AppCommand | None
+
     def __init__(self, db: mogidb.Client):
         self.db = db
+
+    async def on_setup(self, tree: app_commands.CommandTree):
+        commands = await tree.fetch_commands()
+        self.command_enable = next(c for c in commands if c.name == "enable")
 
     @app_commands.command(name="enable", description="Enables the channel to run mogis")
     @default_permissions(None)
@@ -101,6 +107,96 @@ class RoomModule(Module):
 
         await interaction.response.send_message(
             f"Channel {interaction.channel.mention} has been disabled.",
+        )
+
+    @app_commands.command(name="copy", description="Copies a channel config from another channel")
+    @app_commands.rename(copy_from="from")
+    @default_permissions(None)
+    async def copy(
+        self,
+        interaction: discord.Interaction,
+        copy_from: discord.TextChannel,
+    ) -> None:
+        """
+        The /copy command.
+
+        Copies a channel config from another channel
+        """
+
+        assert interaction.guild
+        assert self.command_enable
+
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "This channel cannot be used to run mogis!",
+            )
+            return
+
+        # Get or create guild
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
+
+        # Get the room
+        room = await self.db.get_room(guild.id, interaction.channel.id)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel has not been enabled."
+                f" Try {self.command_enable.mention}ing the channel first.",
+            )
+            return
+
+        # Get the room to copy from
+        copy_from_room = await self.db.get_room(guild.id, copy_from.id)
+        if copy_from_room is None:
+            await interaction.response.send_message(
+                f"The channel {copy_from.mention} is not configured.",
+            )
+            return
+
+        assert not isinstance(copy_from_room.formats, Unset)
+
+        # First, copy config
+        # TODO: probably a better way of doing this
+        copy_options = copy_from_room.settings
+        options = UpdateRoomOptions(
+            decay_after = copy_options.decay_after,
+            inactivity_warning_after = copy_options.inactivity_warning_after,
+            inactivity_drop_after = copy_options.inactivity_drop_after,
+            max_players = copy_options.max_players,
+            players_required = copy_options.players_required,
+            votes_required = copy_options.votes_required,
+            format_selection_mode = copy_options.format_selection_mode,
+        )
+
+        # Push config updates
+        room = await self.db.update_room(guild.id, room.id, options=options)
+        assert not isinstance(room.formats, Unset)
+
+        # Clear channel's current formats
+        for format in room.formats:
+            await self.db.delete_event_format(guild.id, room.id, format.id)
+
+        room.formats.clear()
+
+        # Copy formats
+        for format in copy_from_room.formats:
+            assert not isinstance(format.servers, Unset)
+
+            new_format = await self.db.create_event_format(
+                guild.id,
+                room.id,
+                name=format.name,
+                team_mode=format.team_mode,
+                servers=[server.id for server in format.servers]
+            )
+            room.formats.append(new_format)
+
+        # Render new room
+        view = RoomConfigView(interaction.channel, room)
+        await interaction.response.send_message(
+            view=view,
+            ephemeral=True,
         )
 
 
@@ -334,3 +430,47 @@ class RoomConfigModule(
         # Build up the config embed
         view = RoomConfigView(interaction.channel, room)
         await interaction.response.send_message(view=view, ephemeral=True)
+
+
+class FormatConfigModule(
+    GroupModule,
+    name = "formats",
+    description = "Add or remove formats to the room",
+    default_permissions=discord.Permissions.none(),
+):
+    db: mogidb.Client
+
+    def __init__(self, db: mogidb.Client):
+        self.db = db
+
+    @app_commands.command(name="add", description="Adds a new format to the room")
+    @app_commands.choices(teams=[
+        Choice(name=str(name), value=name.value) for name in list(TeamMode)
+    ])
+    async def add(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        teams: Choice[int] | None,
+    ) -> None:
+        """
+        The /formats add command.
+
+        Adds a new format to the room.
+        """
+
+        team_mode = None
+        if teams is not None:
+            team_mode = TeamMode(teams)
+
+    @app_commands.command(name="remove", description="Removes a format from the room")
+    async def remove(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+    ) -> None:
+        """
+        The /formats remove command.
+
+        Removes a new format from the room.
+        """
