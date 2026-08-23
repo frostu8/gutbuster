@@ -1,3 +1,4 @@
+from mogidb import Unset
 import logging
 
 import discord
@@ -146,7 +147,7 @@ class ServerModule(
         if guild is None:
             guild = await self.db.create_guild(interaction.guild.id)
 
-        assert guild.servers
+        assert not isinstance(guild.servers, Unset)
 
         to_remove = set()
         for server in guild.servers:
@@ -196,7 +197,7 @@ class ServerModule(
         if guild is None:
             guild = await self.db.create_guild(interaction.guild.id)
 
-        assert guild.servers
+        assert not isinstance(guild.servers, Unset)
 
         if len(guild.servers) == 0:
             await interaction.response.send_message(
@@ -231,7 +232,7 @@ class ServerModule(
         if guild is None:
             guild = await self.db.create_guild(interaction.guild.id)
 
-        assert guild.servers
+        assert not isinstance(guild.servers, Unset)
 
         # Create new guild if we need to
         async with self.sqldb.connect() as conn:
