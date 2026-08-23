@@ -1,6 +1,7 @@
 import discord
-from discord import ui
+from discord import ui, SeparatorSpacing
 
+from mogidb import Unset
 from mogidb.model import FormatSelectionMode, Room
 
 
@@ -38,6 +39,9 @@ class RoomConfigContainer(ui.Container):
 
     def update(self):
         assert self.room.guild
+        assert self.room.formats
+
+        self.clear_items()
 
         # Show the guild config
         content = f"## {self.channel.mention} queue config\n"
@@ -115,8 +119,26 @@ class RoomConfigContainer(ui.Container):
         if self.room.format_selection_mode != FormatSelectionMode.VOTE:
             content += "\n*Only applicable when format selection is set to Vote*"
 
-        self.clear_items()
         self.add_item(ui.TextDisplay(content))
+
+        if len(self.room.formats) > 0:
+            self.add_item(ui.Separator(spacing=SeparatorSpacing.large))
+
+        # For each format, build the config
+        for format in self.room.formats:
+            assert not isinstance(format.servers, Unset)
+
+            content = f"**Format {format.name}**"
+
+            content += f"\n**Team mode** <> {format.team_mode!s}"
+
+            if len(format.servers) > 0:
+                content += "\n**Servers**"
+
+            for server in format.servers:
+                content += f"`{server.remote}` - {server.label}"
+
+            self.add_item(ui.TextDisplay(content))
 
 
 class RoomConfigView(ui.LayoutView):
