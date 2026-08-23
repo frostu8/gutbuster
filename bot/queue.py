@@ -1,3 +1,4 @@
+from bot.find_server import find_server
 import asyncio
 import logging
 import math
@@ -314,17 +315,7 @@ class QueueModule(Module):
         assert len(formats) > 0, "Room formats must not be empty"
         selected_format = formats.pop()
 
-        # Find server for queue
-        if isinstance(selected_format.servers, Unset):
-            # "Silently" fetch the format
-            logger.info(f"Fetching format {selected_format.name} from server...")
-            selected_format = await self.db.get_event_format(guild.id, room.id, selected_format.id) or selected_format
-
-        assert not isinstance(selected_format.servers, Unset)
-
-        selected_server = None
-        if len(selected_format.servers) > 0:
-            selected_server = selected_format.servers.pop()
+        selected_server = await find_server(event, db=self.db)
 
         # Update event
         event = await self.db.update_event(

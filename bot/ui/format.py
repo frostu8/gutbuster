@@ -1,3 +1,4 @@
+from bot.find_server import find_server
 import logging
 import math
 import random
@@ -346,17 +347,7 @@ class FormatVote(ui.LayoutView):
         # Pull the event down again in case it was updated during voting
         self.event = await self.db.get_event(guild.id, room.id, self.event.id) or self.event
 
-        # Get servers
-        if isinstance(self.selected_format.servers, Unset):
-            # "Silently" fetch the format
-            logger.info(f"Fetching format {self.selected_format.name} from server...")
-            self.selected_format = await self.db.get_event_format(guild.id, room.id, self.selected_format.id) or self.selected_format
-
-        assert not isinstance(self.selected_format.servers, Unset)
-
-        server = None
-        if len(self.selected_format.servers) > 0:
-            server = self.selected_format.servers.pop()
+        server = await find_server(self.event, db=self.db)
 
         # Update event
         self.event = await self.db.update_event(
