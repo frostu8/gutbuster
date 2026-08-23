@@ -5,7 +5,7 @@ from discord.app_commands import default_permissions
 import mogidb
 from bot.app import GroupModule, Module
 from bot.ui.room import RoomConfigView
-from mogidb.model import FormatSelectionMode, RoomOptions, TeamMode
+from mogidb.model import FormatSelectionMode, RoomOptions, TeamMode, UpdateRoomOptions
 
 
 class RoomModule(Module):
@@ -147,7 +147,7 @@ class RoomConfigModule(
 
         # Build up the config embed
         view = RoomConfigView(interaction.channel, room)
-        await interaction.response.send_message(view=view)
+        await interaction.response.send_message(view=view, ephemeral=True)
 
     @app_commands.command(name="set", description="Sets configuration options")
     @app_commands.describe(decay_after="How long it takes for a queue to decay")
@@ -201,7 +201,7 @@ class RoomConfigModule(
         room = await self.db.update_room(
             guild.id,
             room.id,
-            options=RoomOptions(
+            options=UpdateRoomOptions(
                 decay_after=decay_after,
                 inactivity_warning_after=inactivity_warning_after,
                 inactivity_drop_after=inactivity_drop_after,
@@ -214,4 +214,4 @@ class RoomConfigModule(
 
         # Build up the config embed
         view = RoomConfigView(interaction.channel, room)
-        await interaction.response.send_message(view=view)
+        await interaction.response.send_message(view=view, ephemeral=True)
