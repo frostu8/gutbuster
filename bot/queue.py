@@ -514,7 +514,7 @@ class QueueModule(Module):
         for event in active_events:
             assert event.room
 
-            if event.is_playing(user):
+            if event.status != EventStatus.LFG and event.is_playing(user):
                 channel = interaction.client.get_channel(event.room.id)
                 if channel is None:
                     channel = interaction.client.fetch_channel(event.room.id)
