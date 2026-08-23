@@ -5,6 +5,7 @@ from .format import EventFormat
 from .format_selection_mode import FormatSelectionMode
 from .game_speed import GameSpeed
 from .guild import Guild
+from .join_event_response import JoinEventResponse
 from .room import Room
 from .room_options import RoomOptions
 from .server import GameServer, PlayerInfo, ServerInfo
@@ -24,6 +25,7 @@ __all__ = [
     "GameServer",
     "GameSpeed",
     "Guild",
+    "JoinEventResponse",
     "PlayerInfo",
     "Room",
     "RoomOptions",

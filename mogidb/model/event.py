@@ -20,6 +20,7 @@ class EventParticipant:
     """
 
     user: User
+    substitute: bool
     team_number: int | None
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +46,21 @@ class Event:
     format: EventFormat | None
     server: GameServer | None
     room: Room | Unset = UNSET
+
+    def is_playing(self, user: User | str) -> bool:
+        """
+        Checks if a player is in the event and playing.
+
+        A player is playing if they have a team assigned.
+        """
+
+        if isinstance(user, User):
+            user_id = user.id
+        else:
+            user_id = user
+
+        playing = {p.user.id for p in self.players if not p.substitute}
+        return user_id in playing
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

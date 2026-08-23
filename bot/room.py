@@ -1,16 +1,16 @@
 import discord
-from enum import Enum, unique
-from discord import app_commands, TextChannel
+from discord import app_commands
 from discord.app_commands import default_permissions
-from sqlalchemy.ext.asyncio import AsyncEngine
-from gutbuster.model import get_room, create_room
-from bot.app import Module, GroupModule
+
+import mogidb
+from bot.app import Module
+from mogidb.model import TeamMode
 
 
 class RoomModule(Module):
-    db: AsyncEngine
+    db: mogidb.Client
 
-    def __init__(self, db: AsyncEngine):
+    def __init__(self, db: mogidb.Client):
         self.db = db
 
     @app_commands.command(name="enable", description="Enables the channel to run mogis")
@@ -22,31 +22,46 @@ class RoomModule(Module):
         Enables Mogis to take place in a channel.
         """
 
-        if not isinstance(interaction.channel, TextChannel):
-            # Ignore any user commands
-            raise ValueError("Command not being called in a guild context?")
+        assert interaction.guild
 
-        async with self.db.connect() as conn:
-            # Find the room
-            room = await get_room(interaction.channel, conn)
-            if room is None:
-                # The admin wants to enable this channel!
-                # Make the room, and then make a default FFA format.
-                room = await create_room(interaction.channel, conn)
-                await room.add_format("FFA", conn)
+        # Get channel name
+        if isinstance(interaction.channel, discord.TextChannel):
+            channel_name = interaction.channel.name
+        else:
+            await interaction.response.send_message(
+                "This channel cannot be used to run mogis!",
+            )
+            return
 
-                await interaction.response.send_message(
-                    f"Channel {interaction.channel.mention} has been enabled and initialized to run mogis.\nFormat `FFA` automatically added.",
-                )
-            else:
-                if not room.enabled:
-                    await room.enable(conn)
+        # Get or create guild
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
 
-                await interaction.response.send_message(
-                    f"Channel {interaction.channel.mention} has been enabled.",
-                )
+        # Get the room
+        room = await self.db.get_room(guild.id, interaction.channel.id)
+        if room is None:
+            # The admin wants to enable this channel!
+            # Make the room, and then make a default FFA format.
+            room = await self.db.create_room(
+                guild.id,
+                interaction.channel.id,
+                channel_name,
+                # AHHH !!! FUCK!! WHY ISN'T IT ENABLED BY DEFAULT!!!
+                enabled=True,
+            )
+            await self.db.create_event_format(guild.id, room.id, "FFA", TeamMode.FFA)
 
-            await conn.commit()
+            await interaction.response.send_message(
+                f"Channel {interaction.channel.mention} has been enabled and initialized to run mogis.\nFormat `FFA` automatically added.",
+            )
+        else:
+            if not room.enabled:
+                await self.db.update_room(guild.id, room.id, enabled=True)
+
+            await interaction.response.send_message(
+                f"Channel {interaction.channel.mention} has been enabled.",
+            )
 
     @app_commands.command(name="disable", description="Disables the channel")
     @default_permissions(None)
@@ -57,19 +72,24 @@ class RoomModule(Module):
         Disables the channel's ability to run Mogis.
         """
 
-        if not isinstance(interaction.channel, TextChannel):
-            # Ignore any user commands
-            raise ValueError("Command not being called in a guild context?")
+        assert interaction.guild
 
-        async with self.db.connect() as conn:
-            # Find the room
-            room = await get_room(interaction.channel, conn)
-            if room is not None and room.enabled:
-                # Disable the room
-                await room.disable(conn)
-
+        if not isinstance(interaction.channel, discord.TextChannel):
             await interaction.response.send_message(
-                f"Channel {interaction.channel.mention} has been disabled.",
+                "This channel cannot be used to run mogis!",
             )
+            return
 
-            await conn.commit()
+        # Get or create guild
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
+
+        # Get the room
+        room = await self.db.get_room(guild.id, interaction.channel.id)
+        if room is not None and room.enabled:
+            await self.db.update_room(guild.id, room.id, enabled=False)
+
+        await interaction.response.send_message(
+            f"Channel {interaction.channel.mention} has been disabled.",
+        )

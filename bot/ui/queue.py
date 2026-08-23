@@ -1,28 +1,31 @@
-from sqlalchemy.ext.asyncio import AsyncEngine
-import math
-from datetime import datetime, timezone
-from copy import copy
-from bot.config import Config
 import asyncio
+import math
 from asyncio import Task
-from discord import ui, AllowedMentions, SeparatorSpacing
-from typing import Optional, Dict, List
+from copy import copy
+from datetime import UTC, datetime
+
 import discord
-from gutbuster.servers import WatchedServer, ServerWatcher, GameSpeed
-from gutbuster.model import Event, EventStatus, Participant
-from gutbuster.model.room import TeamMode
+from discord import AllowedMentions, SeparatorSpacing, ui
+
+import mogidb
+from bot.config import Config
+from mogidb.model import Event, EventParticipant, EventStatus, GameServer, TeamMode
 
 
 class QueueStatusContainer(ui.Container):
     config: Config
+    client: discord.Client
     event: Event
-    server: Optional[WatchedServer]
 
-    def __init__(self, config: Config, event: Event, *, server: Optional[WatchedServer] = None):
+    def __init__(self, config: Config, client: discord.Client, event: Event):
         super().__init__()
         self.config = config
+        self.client = client
         self.event = event
-        self.server = server
+
+    @property
+    def server(self) -> GameServer | None:
+        return self.event.server
 
     def color(self) -> discord.Color:
         """
@@ -41,24 +44,22 @@ class QueueStatusContainer(ui.Container):
         else:
             return self.config.colors.server_online_custom
 
-    def _sort_teams(self) -> Dict[int, List[Participant]]:
-        players = self.event.get_participants()
-
+    def _sort_teams(self) -> dict[int, list[EventParticipant]]:
         # Sort players into teams
-        teams: Dict[int, List[Participant]] = {}
-        for player in players:
+        teams: dict[int, list[EventParticipant]] = {}
+        for player in self.event.players:
             # Skip subs
-            if player.assigned_team is None:
+            if player.team_number is None:
                 continue
 
-            if player.assigned_team not in teams:
-                teams[player.assigned_team] = [player]
+            if player.team_number not in teams:
+                teams[player.team_number] = [player]
             else:
-                teams[player.assigned_team].append(player)
+                teams[player.team_number].append(player)
 
         return teams
 
-    def regenerate(self) -> None:
+    async def update(self) -> None:
         """
         Regenerates the embed.
         """
@@ -72,17 +73,21 @@ class QueueStatusContainer(ui.Container):
             content = ""
 
         # List participants
-        if self.event.format and self.event.format.team_mode == TeamMode.FREE_FOR_ALL:
+        if self.event.format and self.event.format.team_mode == TeamMode.FFA:
             # In free for all, each player is assigned their own team. This is
             # annoying, so default to the normal method of printing.
-            for i, player in enumerate(self.event.get_participants()):
+            for i, player in enumerate(self.event.players):
                 # Skip subs
-                if player.assigned_team is None:
+                if player.team_number is None:
                     continue
 
-                mention = f"@{player.user.name}"
-                if isinstance(player.user.user, discord.User | discord.Member):
-                    mention = player.user.user.mention
+                mention = f"{player.user.display_name}"
+                if player.user.discord_user_id is not None:
+                    discord_user = self.client.get_user(player.user.discord_user_id)
+                    if discord_user is None:
+                        discord_user = await self.client.fetch_user(player.user.discord_user_id)
+
+                    mention = discord_user.mention
 
                 if i > 0:
                     # Add a space between mentions to make it more readable.
@@ -95,12 +100,17 @@ class QueueStatusContainer(ui.Container):
                 content += f"\n**Team {team_index+1}**"
                 for player in team:
                     # Skip subs
-                    if player.assigned_team is None:
+                    if player.team_number is None:
                         continue
 
-                    mention = f"@{player.user.name}"
-                    if isinstance(player.user.user, discord.User | discord.Member):
-                        mention = player.user.user.mention
+                    discord_user = (
+                        player.user.discord_user_id is not None
+                        and self.client.get_user(player.user.discord_user_id)
+                    )
+                    if discord_user:
+                        mention = f"{discord_user.mention}"
+                    else:
+                        mention = f"@{player.user.display_name}"
 
                     content += f" {mention}"
 
@@ -119,7 +129,7 @@ class QueueStatusContainer(ui.Container):
         if self.server.info is None:
             content += "🔴 Server is offline."
         else:
-            content += f"🟢 **IP** `{self.server.ip}:{self.server.port}`"
+            content += f"🟢 **IP** `{self.server.remote}`"
 
         self.add_item(ui.TextDisplay(content))
 
@@ -128,11 +138,11 @@ class QueueStatusContainer(ui.Container):
             self.add_item(ui.Separator(spacing=SeparatorSpacing.large))
 
             # Show map title
-            content = f"**Map** {self.server.map_title}\n"
+            content = f"**Map** {self.server.info.map_name}\n"
 
-            if len(self.server.players) > 0:
+            if len(self.server.info.players) > 0:
                 # List all players
-                players = copy(self.server.players)
+                players = copy(self.server.info.players)
                 players.sort(key=lambda a: a.score, reverse=True)
                 for player in players:
                     score = str(player.score).rjust(4, " ")
@@ -145,21 +155,15 @@ class QueueStatusContainer(ui.Container):
             self.add_item(ui.TextDisplay(content))
 
         # Timestamp embed
-        if self.server.last_updated is not None:
-            epoch = datetime.fromtimestamp(0, timezone.utc)
+        if self.server.last_update_time is not None:
+            epoch = datetime.fromtimestamp(0, UTC)
 
             timestamp = math.trunc(
-                (self.server.last_updated - epoch).total_seconds()
+                (self.server.last_update_time - epoch).total_seconds()
             )
             footer_content = f"Last updated at <t:{timestamp}:T>"
 
             self.add_item(ui.TextDisplay(footer_content))
-
-    async def _wait_for_update(self) -> None:
-        if self.server is None:
-            raise ValueError("No server to update.")
-        else:
-            await self.server.update_event.wait()
 
 
 class QueueStatus(ui.LayoutView):
@@ -167,45 +171,61 @@ class QueueStatus(ui.LayoutView):
     A message that reports the current status of a Mogi queue.
     """
 
-    container: QueueStatusContainer
-
-    db: AsyncEngine
+    db: mogidb.Client
     client: discord.Client
-    _realtime_task: Optional[Task[None]]
 
-    def __init__(self, client: discord.Client, db: AsyncEngine, config: Config, event: Event, servers: ServerWatcher, *, timeout: Optional[int | float] = 60*60):
+    event: Event
+
+    _realtime_task: Task[None] | None
+
+    def __init__(self, config: Config, client: discord.Client, db: mogidb.Client, event: Event, *, timeout: float | None = 60*60):
         super().__init__(timeout=timeout)
 
-        # Find server attached to event
-        guild = event.room.guild
-        try:
-            server = next(filter(lambda s: s.remote == event.remote, servers.iter(guild)))
-        except StopIteration:
-            server = None
-
-        self.container = QueueStatusContainer(config, event, server=server)
-        self.add_item(self.container)
+        self.event = event
 
         self.db = db
+        self.config = config
         self.client = client
         self.message = None
         self._realtime_task = None
 
-    @property
-    def event(self) -> Event:
-        return self.container.event
+    async def update(self):
+        assert self.event.room
+        assert self.event.room.guild
 
-    @event.setter
-    def set_event(self, event: Event) -> None:
-        self.container.event = event
-        self.container.regenerate()
+        room = self.event.room
+        guild = self.event.room.guild
+
+        # Update the event
+        event = await self.db.get_event(guild.id, room.id, self.event.id)
+        if event is None:
+            # Event was removed?
+            return
+
+        # If needed, fetch user data into cache
+        for player in event.players:
+            if player.user.discord_user_id is None:
+                continue
+
+            user = self.client.get_user(player.user.discord_user_id)
+            if user is None:
+                await self.client.fetch_user(player.user.discord_user_id)
+
+        # Refresh items
+        self.clear_items()
+
+        container = QueueStatusContainer(self.config, self.client, event)
+        await container.update()
+
+        self.add_item(container)
 
     async def _realtime(self) -> None:
         while True:
-            await self.container._wait_for_update()
+            # Update on cycle
+            await asyncio.sleep(30)
             await self.update()
 
-            if self.event.status == EventStatus.ENDED:
+            if self.event.status == EventStatus.CONCLUDED:
                 self.stop()
                 return
 
@@ -215,7 +235,7 @@ class QueueStatus(ui.LayoutView):
 
     @property
     def has_realtime(self) -> bool:
-        return self.container.server is not None
+        return self.event.server is not None
 
     def realtime(self) -> None:
         """
@@ -225,18 +245,6 @@ class QueueStatus(ui.LayoutView):
         if self._realtime_task is not None:
             self._realtime_task.cancel()
         self._realtime_task = asyncio.create_task(self._realtime())
-
-    async def update(self) -> None:
-        # Get new data for event
-        async with self.db.connect() as conn:
-            await self.event.refetch(conn)
-
-        # Cache all users
-        for participant in self.event.get_participants():
-            await participant.user.fetch_user(self.client)
-
-        # Regenerate
-        self.container.regenerate()
 
     def stop(self) -> None:
         super().stop()

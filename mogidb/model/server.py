@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self
 
 import dacite
-from dacite import Config
 
 from ..types import UNSET, Unset
 from .game_speed import GameSpeed
@@ -93,7 +92,7 @@ class GameServer:
     note: str | None
     info: ServerInfo | None
     last_update_time: datetime | None
-    guild: Guild | Unset = UNSET
+    guild: "Guild | Unset" = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -1,22 +1,27 @@
-from sqlalchemy.sql import text
-from sqlalchemy.ext.asyncio import AsyncConnection
 import datetime
-from typing import List, Optional
-import discord
 from dataclasses import dataclass, field
-from .format import FormatSelectMode, EventFormat
+from datetime import UTC
+from typing import List, Optional
+
+import discord
+from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.sql import text
+
+from mogidb.model import Guild as ApiGuild
+
+from .format import FormatSelectMode
 
 
 @dataclass(kw_only=True)
-class PersistentStatus(object):
+class PersistentStatus:
     """
     A board for displaying server information.
     """
 
     id: int
-    parent: Guild
+    guild: ApiGuild
     channel: discord.TextChannel | discord.Object
-    message: Optional[discord.Message | discord.Object]
+    message: discord.Message | discord.Object | None
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
 
@@ -27,10 +32,10 @@ class PersistentStatus(object):
         On restarts, the bot will update this.
         """
 
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(UTC)
         await conn.execute(
             text("""
-            UPDATE persistent_status
+            UPDATE persistent_boards
             SET discord_message_id = :message_id, updated_at = :now
             WHERE id = :id
             """),
@@ -46,11 +51,73 @@ class PersistentStatus(object):
 
         await conn.execute(
             text("""
-            DELETE FROM persistent_status
+            DELETE FROM persistent_boards
             WHERE id = :id
             """),
             {"id": self.id},
         )
+
+
+async def list_boards(guild: ApiGuild, conn: AsyncConnection) -> list[PersistentStatus]:
+    """
+    Loads the list of boards in a guild.
+    """
+
+    res = await conn.execute(
+        text("""
+        SELECT id, guild_id, discord_channel_id, discord_message_id, inserted_at, updated_at
+        FROM persistent_boards
+        WHERE guild_id = :guild_id
+        """),
+        {"guild_id": guild.id},
+    )
+
+    persistent_statuses = []
+    for row in res:
+        board = PersistentStatus(
+            id=row.id,
+            guild=guild,
+            channel=discord.Object(row.discord_channel_id),
+            message=row.discord_message_id and discord.Object(row.discord_message_id),
+            inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
+            updated_at=datetime.datetime.fromisoformat(row.updated_at),
+        )
+        persistent_statuses.append(board)
+
+    return persistent_statuses
+
+async def create_board(
+    guild: ApiGuild,
+    channel: discord.TextChannel,
+    conn: AsyncConnection,
+) -> PersistentStatus:
+    """
+    Adds a persistent board to the guild.
+    """
+
+    now = datetime.datetime.now(UTC)
+
+    res = await conn.execute(
+        text("""
+        INSERT INTO persistent_boards (guild_id, discord_channel_id, inserted_at, updated_at)
+        VALUES (:guild_id, :channel_id, :now, :now)
+        RETURNING id
+        """),
+        {"guild_id": guild.id, "channel_id": channel.id, "now": now.isoformat()}
+    )
+
+    row = res.first()
+    if row is None:
+        raise ValueError("failed to get id of new guild")
+
+    return PersistentStatus(
+        id=row.id,
+        guild=guild,
+        channel=channel,
+        message=None,
+        inserted_at=now,
+        updated_at=now,
+    )
 
 
 @dataclass(kw_only=True)
@@ -74,77 +141,6 @@ class Guild(object):
     inactivity_drop_after: int = field(default=2100)
     inserted_at: datetime.datetime
     updated_at: datetime.datetime
-
-    async def preload_boards(self, conn: AsyncConnection) -> List[PersistentStatus]:
-        """
-        Loads the list of boards in a guild
-        """
-
-        if self.persistent_statuses is not None:
-            return self.persistent_statuses
-
-        res = await conn.execute(
-            text("""
-            SELECT id, guild_id, discord_channel_id, discord_message_id, inserted_at, updated_at
-            FROM persistent_status
-            WHERE guild_id = :id
-            """),
-            {"id": self.id},
-        )
-
-        self.persistent_statuses = []
-        for row in res:
-            board = PersistentStatus(
-                id=row.id,
-                parent=self,
-                channel=discord.Object(row.discord_channel_id),
-                message=row.discord_message_id and discord.Object(row.discord_message_id),
-                inserted_at=datetime.datetime.fromisoformat(row.inserted_at),
-                updated_at=datetime.datetime.fromisoformat(row.updated_at),
-            )
-            self.persistent_statuses.append(board)
-
-        return self.persistent_statuses
-
-    async def add_board(
-        self,
-        channel: discord.TextChannel,
-        conn: AsyncConnection,
-    ) -> PersistentStatus:
-        """
-        Adds a persistent board to the guild.
-        """
-
-        if self.persistent_statuses is None:
-            status_list = await self.preload_boards(conn)
-        else:
-            status_list = self.persistent_statuses
-
-        now = datetime.datetime.now()
-
-        res = await conn.execute(
-            text("""
-            INSERT INTO persistent_status (guild_id, discord_channel_id, inserted_at, updated_at)
-            VALUES (:id, :channel_id, :now, :now)
-            RETURNING id
-            """),
-            {"id": self.id, "channel_id": channel.id, "now": now.isoformat()}
-        )
-
-        row = res.first()
-        if row is None:
-            raise ValueError("failed to get id of new guild")
-
-        status = PersistentStatus(
-            id=row.id,
-            parent=self,
-            channel=channel,
-            message=None,
-            inserted_at=now,
-            updated_at=now,
-        )
-        status_list.append(status)
-        return status
 
 
 async def create_guild(
@@ -210,7 +206,7 @@ async def get_guild(
         updated_at=datetime.datetime.fromisoformat(row.updated_at),
     )
 
-async def list_all_boards(conn: AsyncConnection) -> List[PersistentStatus]:
+async def list_all_boards(conn: AsyncConnection) -> list[PersistentStatus]:
     res = await conn.execute(
         text("""
         SELECT
@@ -238,7 +234,7 @@ async def list_all_boards(conn: AsyncConnection) -> List[PersistentStatus]:
 
         pin = PersistentStatus(
             id=row.id,
-            parent=guild,
+            guild=guild,
             channel=discord.Object(row.discord_channel_id),
             message=row.discord_message_id and discord.Object(row.discord_message_id),
             inserted_at=datetime.datetime.fromisoformat(row.inserted_at),

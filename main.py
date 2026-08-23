@@ -1,15 +1,17 @@
-import sys
+import logging
 import os
-from bot.queue import QueueModule
+import sys
+
+import discord
+from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import create_async_engine
+
+import mogidb
 from bot.app import App
 from bot.config import load as load_config
+from bot.queue import QueueModule
 from bot.room import RoomModule
-import discord
-from gutbuster.servers import ServerWatcher
 from bot.server import ServerModule
-from sqlalchemy.ext.asyncio import create_async_engine
-from dotenv import load_dotenv
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -19,17 +21,24 @@ load_dotenv()
 # Load our toml file for additional config
 config = load_config("config.toml")
 
+# Connect to API
+api_token = os.getenv("ACCESS_TOKEN")
+if api_token is None:
+    logger.error("Failed to get API token! Set ACCESS_TOKEN in .env!")
+    sys.exit(1)
+    
+db = mogidb.Client(config.api_endpoint, access_token=api_token)
+
 # Load database
-db = create_async_engine("sqlite+aiosqlite:///dev_gutbuster.sqlite")
-watcher = ServerWatcher(db)
+sqldb = create_async_engine("sqlite+aiosqlite:///dev_gutbuster.sqlite")
 
 intents = discord.Intents.default()
 app = App(intents=intents)
 
 # Load room commands
 app.add_module(RoomModule(db))
-app.add_module(QueueModule(config, watcher, app, db))
-app.add_module(ServerModule(config, db, watcher, app))
+app.add_module(QueueModule(config, app, db, sqldb))
+app.add_module(ServerModule(config, db, sqldb, app))
 
 
 # Fetch our token

@@ -1,25 +1,26 @@
-from gutbuster.servers.watcher import ServerWatcher
-from sqlalchemy.ext.asyncio import AsyncEngine
-from gutbuster.model.guild import PersistentStatus
-from asyncio import Task
-import discord
-from copy import copy
-import math
-from datetime import datetime, timezone
-from gutbuster.servers.packet import GameSpeed
-from typing import Optional, List
-from discord import ui, SeparatorSpacing
-from gutbuster.servers import WatchedServer
-from bot.config import Config
 import asyncio
+import math
+from asyncio import Task
+from copy import copy
+from datetime import UTC, datetime
+
+import discord
+from discord import SeparatorSpacing, ui
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+import mogidb
+from bot.boards import PersistentStatus
+from bot.config import Config
+from mogidb.model import GameServer, GameSpeed, Guild
+
 
 class ServerContainer(ui.Container):
-    server: WatchedServer
+    server: GameServer
     header: ui.TextDisplay = ui.TextDisplay(content="")
 
-    _task: Optional[asyncio.Task]
+    _task: asyncio.Task | None
 
-    def __init__(self, config: Config, server: WatchedServer):
+    def __init__(self, config: Config, server: GameServer):
         self.server = server
         self._task = None
 
@@ -35,9 +36,6 @@ class ServerContainer(ui.Container):
         super().__init__(accent_color=color)
         self.regenerate()
 
-    async def _wait_until_update(self) -> None:
-        await self.server.update_event.wait()
-
     def regenerate(self) -> None:
         """
         Regenerates the embed.
@@ -46,7 +44,7 @@ class ServerContainer(ui.Container):
         self.clear_items()
 
         # TODO: Figure out a workaround for Discord having "security"
-        _join_url = f"ringracers://{self.server.ip}:{self.server.port}"
+        _join_url = f"ringracers://{self.server.remote}"
 
         if self.server.info is None:
             content = ""
@@ -63,7 +61,7 @@ class ServerContainer(ui.Container):
             if self.server.label is not None:
                 content += f"## {self.server.label}\n"
 
-            content += f"🟢 **IP** `{self.server.ip}:{self.server.port}`"
+            content += f"🟢 **IP** `{self.server.remote}`"
             self.header.content = content
 
             self.add_item(self.header)
@@ -81,13 +79,13 @@ class ServerContainer(ui.Container):
                 case _:
                     pass
 
-            content = f"**Map** {self.server.map_title}\n**Game Speed** {game_speed}"
+            content = f"**Map** {self.server.info.map_name}\n**Game Speed** {game_speed}"
 
-            if len(self.server.players) > 0:
+            if len(self.server.info.players) > 0:
                 content += "\n\n**Players**"
 
                 # List all players
-                players = copy(self.server.players)
+                players = copy(self.server.info.players)
                 players.sort(key=lambda a: a.score, reverse=True)
                 for player in players:
                     score = str(player.score).rjust(4, " ")
@@ -100,11 +98,11 @@ class ServerContainer(ui.Container):
             self.add_item(ui.TextDisplay(content))
 
             # Timestamp embed
-            if self.server.last_updated is not None:
-                epoch = datetime.fromtimestamp(0, timezone.utc)
+            if self.server.last_update_time is not None:
+                epoch = datetime.fromtimestamp(0, UTC)
 
                 timestamp = math.trunc(
-                    (self.server.last_updated - epoch).total_seconds()
+                    (self.server.last_update_time - epoch).total_seconds()
                 )
                 footer_content = f"Last updated at <t:{timestamp}:T>"
 
@@ -112,18 +110,22 @@ class ServerContainer(ui.Container):
 
 
 class ServerView(ui.LayoutView):
-    message: Optional[discord.Message]
-    containers: List[ServerContainer]
+    message: discord.Message | None
+    containers: list[ServerContainer]
+    guild: Guild
 
-    db: AsyncEngine
+    config: Config
+    db: mogidb.Client
 
-    _task: Optional[Task[None]]
+    _task: Task[None] | None
 
-    def __init__(self, config: Config, db: AsyncEngine, *servers: WatchedServer, timeout: Optional[int | float] = 1800):
+    def __init__(self, config: Config, db: mogidb.Client, guild: Guild, *servers: GameServer, timeout: float | None = 1800):
         super().__init__(timeout=timeout)
 
+        self.config = config
         self.db = db
 
+        self.guild = guild
         self.message = None
         self.containers = []
         for server in servers:
@@ -142,16 +144,20 @@ class ServerView(ui.LayoutView):
 
     async def _realtime(self) -> None:
         while True:
-            futures = (container._wait_until_update() for container in self.containers)
-            await asyncio.gather(*futures)
+            # Sleep until poking API again
+            await asyncio.sleep(30)
 
-            async with self.db.connect() as conn:
-                for container in self.containers:
-                    await container.server.inner.refetch(conn)
+            # POKE API!!!!!!!!!!!!!
+            should_update = False
+            for container in self.containers:
+                server = await self.db.get_server(self.guild.id, container.server.id)
+                if server is not None:
+                    container.server = server
                     container.regenerate()
+                    should_update = True
 
             # Update message
-            if self.message is not None:
+            if should_update and self.message is not None:
                 try:
                     await self.message.edit(view=self)
                 except discord.NotFound:
@@ -180,18 +186,15 @@ class PersistentServerView(ServerView):
     A servers view that persists on restarts.
     """
 
-    watcher: ServerWatcher
-    config: Config
-    
+    sqldb: AsyncEngine
     obj: PersistentStatus
 
-    channel: Optional[discord.TextChannel]
+    channel: discord.TextChannel | None
 
-    def __init__(self, obj: PersistentStatus, config: Config, watcher: ServerWatcher, db: AsyncEngine, timeout: Optional[int | float] = None):
-        super().__init__(config, db, timeout=timeout)
+    def __init__(self, obj: PersistentStatus, config: Config, db: mogidb.Client, sqldb: AsyncEngine, timeout: float | None = None):
+        super().__init__(config, db, obj.guild, timeout=timeout)
+        self.sqldb = sqldb
         self.obj = obj
-        self.config = config
-        self.watcher = watcher
 
         self.channel = None
 
@@ -216,7 +219,7 @@ class PersistentServerView(ServerView):
             await self.message.delete()
 
         self.message = await channel.send(view=self)
-        async with self.db.connect() as conn:
+        async with self.sqldb.connect() as conn:
             await self.obj.set_message(self.message, conn)
             await conn.commit()
 
@@ -229,7 +232,10 @@ class PersistentServerView(ServerView):
 
         self.clear_items()
         self.containers.clear()
-        for server in self.watcher.iter(self.obj.parent):
+
+        # Fetch servers from MogiDB
+        servers = await self.db.list_servers(self.guild.id)
+        for server in servers:
             container = ServerContainer(self.config, server)
             self.add_item(container)
             self.containers.append(container)

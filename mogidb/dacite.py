@@ -4,6 +4,7 @@ from typing import Protocol, Self
 import dacite
 
 from .model import (
+    EventStatus,
     FormatSelectionMode,
     GameSpeed,
     Guild,
@@ -14,7 +15,7 @@ from .model import (
 
 CONFIG = dacite.Config(
     forward_references={"Guild": Guild},
-    cast=[FormatSelectionMode, TeamMode, GameSpeed, ServerFlags, UserFlags],
+    cast=[EventStatus, FormatSelectionMode, TeamMode, GameSpeed, ServerFlags, UserFlags],
     type_hooks={datetime.datetime: datetime.datetime.fromisoformat}
 )
 

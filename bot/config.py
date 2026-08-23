@@ -1,63 +1,46 @@
 import tomllib
-from typing import List, Dict, Any, Self
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any, Self
+
+import dacite
 from discord import Color
 
 
-def _get_str( map: Dict[str, Any], key: str, default: str) -> str:
-    data = map.get(key, default)
-    if not isinstance(data, str):
-        raise ValueError(f"{key} is invalid type {type(data)}")
-
-    return data
-
-
 @dataclass
-class Messages(object):
-    gathered: List[str]
+class Messages:
+    gathered: list[str]
 
     @classmethod
-    def fromdict(cls, data: Dict[str, Any]) -> Self:
-        return cls(gathered=data.get("gathered", []))
+    def from_dict(cls, src: Mapping[str, Any]) -> Self:
+        return dacite.from_dict(cls, src)
 
 
 @dataclass
-class Colors(object):
-    server_online_race: Color
-    server_online_battle: Color
-    server_online_custom: Color
-    server_offline: Color
+class Colors:
+    server_online_race: Color = field(default_factory=lambda: Color.from_str("#42ed53"))
+    server_online_battle: Color = field(default_factory=lambda: Color.from_str("#42ed53"))
+    server_online_custom: Color = field(default_factory=lambda: Color.from_str("#42ed53"))
+    server_offline: Color = field(default_factory=lambda: Color.from_str("#d6240d"))
 
     @classmethod
-    def fromdict(cls, data: Dict[str, Any]) -> Self:
-        server_online_race = _get_str(data, "server_online_race", "#42ed53")
-        server_online_battle = _get_str(data, "server_online_battle", "#42ed53")
-        server_online_custom = _get_str(data, "server_online_custom", "#42ed53")
-        server_offline = _get_str(data, "server_offline", "#d6240d")
-
-        return cls(
-            server_online_race=Color.from_str(server_online_race),
-            server_online_battle=Color.from_str(server_online_battle),
-            server_online_custom=Color.from_str(server_online_custom),
-            server_offline=Color.from_str(server_offline),
-        )
+    def from_dict(cls, src: Mapping[str, Any]) -> Self:
+        return dacite.from_dict(cls, src)
 
 
 @dataclass
-class Config(object):
+class Config:
     messages: Messages
-    colors: Colors
+    colors: Colors = field(default_factory=lambda: Colors())
+    api_endpoint: str = "http://localhost:8000"
 
     @classmethod
-    def fromdict(cls, data: Dict[str, Any]) -> Self:
-        messages = Messages.fromdict(data.get("messages", {}))
-        colors = Colors.fromdict(data.get("color", {}))
-
-        return cls(messages, colors)
+    def from_dict(cls, src: Mapping[str, Any]) -> Self:
+        return dacite.from_dict(cls, src)
 
 
 def load(file_name: str) -> Config:
-    file = open(file_name, "rb")
-    config = tomllib.load(file)
+    with open(file_name, "rb") as file:
+        config = tomllib.load(file)
 
-    return Config.fromdict(config)
+    return Config.from_dict(config)

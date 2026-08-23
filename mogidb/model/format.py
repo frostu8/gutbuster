@@ -5,6 +5,7 @@ from typing import Any, Self
 import dacite
 
 from ..types import UNSET, Unset
+from .server import GameServer
 from .team_mode import TeamMode
 
 
@@ -23,7 +24,7 @@ class EventFormat:
     id: int
     name: str
     team_mode: TeamMode
-    servers: list[int] | Unset = UNSET
+    servers: list[GameServer] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

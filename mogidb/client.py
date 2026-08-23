@@ -4,8 +4,19 @@ from typing import Any
 import httpx
 
 from .dacite import FromDict
-from .model import ApiError as ErrorData
-from .model import EventFormat, Guild, Room, RoomOptions, TeamMode
+from .model import ApiError as ErrorData, EventStatus
+from .model import (
+    Event,
+    EventFormat,
+    EventParticipant,
+    GameServer,
+    Guild,
+    JoinEventResponse,
+    Room,
+    RoomOptions,
+    TeamMode,
+    User,
+)
 
 
 class ApiError(Exception):
@@ -39,7 +50,6 @@ class Client:
     """
 
     client: httpx.AsyncClient
-    loop: EventLoop
 
     _base_url: str
 
@@ -50,21 +60,19 @@ class Client:
     ):
         self._base_url = base_url
 
-        self.loop = EventLoop()
+        # Instantiate client
         self.client = httpx.AsyncClient(
             headers={
                 "X-API-KEY": access_token,
             }
         )
 
-    def __del__(self):
+    async def aclose(self) -> None:
         """
-        Closes the client when all references are lost.
+        Closes the underlying client.
         """
 
-        self.loop.run_until_complete(self.client.aclose())
-        self.loop.close()
-
+        await self.client.aclose()
 
     async def _req_raw(self, req: httpx.Request) -> Any:
         res = await self.client.send(req)
@@ -141,6 +149,7 @@ class Client:
         guild_id: int,
         channel_id: int,
         channel_name: str,
+        enabled: bool | None = None,
         options: RoomOptions | None = None
     ) -> Room:
         if options is None:
@@ -149,6 +158,9 @@ class Client:
         content = options.to_dict()
         content["room_id"] = channel_id
         content["name"] = channel_name
+
+        if enabled is not None:
+            content["enabled"] = enabled
 
         req = self.client.build_request("POST", f"{self._base_url}/guilds/{guild_id}/rooms", json=content)
         return await self._req(req, Room)
@@ -165,14 +177,18 @@ class Client:
         self,
         guild_id: int,
         channel_id: int,
-        channel_name: str,
+        channel_name: str | None = None,
+        enabled: bool | None = None,
         options: RoomOptions | None = None
     ) -> Room:
         if options is None:
             options = RoomOptions()
 
         content = options.to_dict()
-        content["name"] = channel_name
+        if enabled is not None:
+            content["enabled"] = enabled
+        if channel_name is not None:
+            content["name"] = channel_name
 
         req = self.client.build_request("PATCH", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}", json=content)
         return await self._req(req, Room)
@@ -203,7 +219,7 @@ class Client:
     ) -> EventFormat:
         content: dict[str, Any] = {"name": name}
         if team_mode is not None:
-            content["team_mode"] = team_mode
+            content["team_mode"] = team_mode.value
         if servers is not None:
             content["servers"] = servers
 
@@ -234,7 +250,7 @@ class Client:
         if servers is not None:
             content["servers"] = servers
         if team_mode is not None:
-            content["team_mode"] = team_mode
+            content["team_mode"] = team_mode.value
 
         req = self.client.build_request("PATCH", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/formats/{format_id}", json=content)
         return await self._req(req, EventFormat)
@@ -247,3 +263,211 @@ class Client:
     ) -> None:
         req = self.client.build_request("DELETE", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/formats/{format_id}")
         return await self._req_raw(req)
+
+    async def list_events(
+        self,
+        guild_id: int,
+        active: bool | None = None,
+        user_id: str | None = None,
+    ) -> list[Event]:
+        params: dict[str, Any] = {}
+        if active is not None:
+            params["active"] = active
+        if user_id is not None:
+            params["user"] = user_id
+
+        req = self.client.build_request("GET", f"{self._base_url}/guilds/{guild_id}/events", params=params)
+        return await self._req_many(req, Event)
+
+    async def create_event(
+        self,
+        guild_id: int,
+        channel_id: int,
+        title: str | None = None,
+    ) -> Event:
+        content: dict[str, Any] = {}
+        if title is not None:
+            content["title"] = title
+
+        req = self.client.build_request("POST", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/events", json=content)
+        return await self._req(req, Event)
+
+    async def get_event(
+        self,
+        guild_id: int,
+        channel_id: int,
+        event_id: str,
+    ) -> Event | None:
+        req = self.client.build_request("GET", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/events/{event_id}")
+        return await self._req_optional(req, Event)
+
+    async def update_event(
+        self,
+        guild_id: int,
+        channel_id: int,
+        event_id: str,
+        title: str | None = None,
+        status: EventStatus | None = None,
+        format: int | None = None,
+        server: int | None = None,
+    ) -> Event:
+        content: dict[str, Any] = {}
+        if title is not None:
+            content["title"] = title
+        if status is not None:
+            content["status"] = status.value
+        if format is not None:
+            content["format"] = format
+        if server is not None:
+            content["server"] = server
+
+        req = self.client.build_request("PATCH", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/events/{event_id}", json=content)
+        return await self._req(req, Event)
+
+    async def delete_event(
+        self,
+        guild_id: int,
+        channel_id: int,
+        event_id: str,
+    ) -> None:
+        req = self.client.build_request("DELETE", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/events/{event_id}")
+        return await self._req_raw(req)
+
+    async def get_current_event(
+        self,
+        guild_id: int,
+        channel_id: int,
+    ) -> Event | None:
+        req = self.client.build_request("GET", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/events/~current")
+        return await self._req_optional(req, Event)
+
+    async def list_event_participants(
+        self,
+        guild_id: int,
+        channel_id: int,
+        event_id: str,
+    ) -> list[EventParticipant]:
+        req = self.client.build_request("GET", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/events/{event_id}/participants")
+        return await self._req_many(req, EventParticipant)
+
+    async def join_event(
+        self,
+        guild_id: int,
+        channel_id: int,
+        event_id: str,
+        user_id: str,
+    ) -> JoinEventResponse:
+        req = self.client.build_request(
+            "POST",
+            f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/events/{event_id}/participants",
+            json={"user_id": user_id},
+        )
+        return await self._req(req, JoinEventResponse)
+
+    async def assign_teams(
+        self,
+        guild_id: int,
+        channel_id: int,
+        event_id: str,
+        balance_mode: str | None = None,
+        players: list[str] | None = None,
+    ) -> Event:
+        content: dict[str, Any] = {}
+        if balance_mode is not None:
+            content["balance_mode"] = balance_mode
+        if players is not None:
+            content["players"] = players
+
+        req = self.client.build_request(
+            "POST",
+            f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/events/{event_id}/participants/teams~assign",
+            json=content,
+        )
+        return await self._req(req, Event)
+
+    async def leave_event(
+        self,
+        guild_id: int,
+        channel_id: int,
+        event_id: str,
+        user_id: str,
+    ) -> Event:
+        req = self.client.build_request(
+            "DELETE",
+            f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/events/{event_id}/participants/{user_id}",
+        )
+        return await self._req(req, Event)
+
+    async def create_server(
+        self,
+        guild_id: int,
+        remote: str,
+        label: str | None = None,
+        note: str | None = None,
+    ) -> GameServer:
+        content: dict[str, Any] = {"remote": remote}
+        if label is not None:
+            content["label"] = label
+        if note is not None:
+            content["note"] = note
+
+        req = self.client.build_request("POST", f"{self._base_url}/guilds/{guild_id}/servers", json=content)
+        return await self._req(req, GameServer)
+
+    async def list_servers(
+        self,
+        guild_id: int,
+    ) -> list[GameServer]:
+        req = self.client.build_request("GET", f"{self._base_url}/guilds/{guild_id}/servers")
+        return await self._req_many(req, GameServer)
+
+    async def get_server(
+        self,
+        guild_id: int,
+        server_id: int,
+    ) -> GameServer | None:
+        req = self.client.build_request("GET", f"{self._base_url}/guilds/{guild_id}/servers/{server_id}")
+        return await self._req_optional(req, GameServer)
+
+    async def update_server(
+        self,
+        guild_id: int,
+        server_id: int,
+        label: str | None = None,
+        note: str | None = None,
+    ) -> GameServer:
+        content: dict[str, Any] = {}
+        if label is not None:
+            content["label"] = label
+        if note is not None:
+            content["note"] = note
+
+        req = self.client.build_request("PATCH", f"{self._base_url}/guilds/{guild_id}/servers/{server_id}", json=content)
+        return await self._req(req, GameServer)
+
+    async def delete_server(
+        self,
+        guild_id: int,
+        server_id: int,
+    ) -> None:
+        req = self.client.build_request("DELETE", f"{self._base_url}/guilds/{guild_id}/servers/{server_id}")
+        await self._req_raw(req)
+
+    async def upsert_user(
+        self,
+        discord_user_id: int,
+        display_name: str,
+    ) -> User:
+        req = self.client.build_request(
+            "PUT",
+            f"{self._base_url}/users/{discord_user_id}",
+            json={"display_name": display_name},
+        )
+        return await self._req(req, User)
+
+    async def get_user(
+        self,
+        user_id: str,
+    ) -> User | None:
+        req = self.client.build_request("GET", f"{self._base_url}/users/{user_id}")
+        return await self._req_optional(req, User)

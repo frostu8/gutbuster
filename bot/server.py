@@ -1,33 +1,15 @@
-from gutbuster.model import get_guild, create_guild, list_all_boards
-from gutbuster.model.guild import Guild
-from asyncio import Task
-from gutbuster.servers import (
-    Server,
-    ConnectError,
-    ServerInfo,
-    PacketError,
-    Packet,
-    ServerFlags,
-    RefuseReason,
-    GameSpeed,
-    ServerWatcher,
-    WatchedServer
-)
-import discord
-import asyncio
-import math
 import logging
-from copy import copy
-from datetime import datetime, timezone
+
+import discord
+from discord import app_commands
 from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlalchemy.exc import IntegrityError
-from discord import app_commands, ui
-from discord.ext import tasks
-from discord.ui.separator import SeparatorSpacing
-from typing import Optional, List, Dict
-from bot.app import GroupModule, Module
+
+import mogidb
+from bot.app import GroupModule
+from bot.boards import create_board, list_all_boards
 from bot.config import Config
-from bot.ui.server import ServerView, PersistentServerView
+from bot.ui.server import PersistentServerView, ServerView
+from mogidb.model import Guild
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +21,18 @@ class ServerModule(
     default_permissions=discord.Permissions.none(),
 ):
     config: Config
-    db: AsyncEngine
-    watcher: ServerWatcher
+    sqldb: AsyncEngine
+    db: mogidb.Client
     client: discord.Client
 
-    pinned_views: List[PersistentServerView]
+    pinned_views: list[PersistentServerView]
 
-    command: Optional[app_commands.AppCommand]
+    command: app_commands.AppCommand | None
 
-    def __init__(self, config: Config, db: AsyncEngine, watcher: ServerWatcher, client: discord.Client):
+    def __init__(self, config: Config, db: mogidb.Client, sqldb: AsyncEngine, client: discord.Client):
         self.config = config
         self.db = db
-        self.watcher = watcher
+        self.sqldb = sqldb
         self.client = client
 
         self.pinned_views = []
@@ -61,14 +43,10 @@ class ServerModule(
         commands = await tree.fetch_commands()
         self.command = next(c for c in commands if c.name == "servers")
 
-        # Start watching servers
-        await self.watcher.load()
-        self.knock_servers.start()
-
     async def on_ready(self):
         # Register pinned views
-        async with self.db.connect() as conn:
-            pinned = await list_all_boards(conn)
+        async with self.sqldb.connect() as conn:
+            pinned = await list_all_boards(self.db, conn)
 
             for pin in pinned:
                 if pin.message is None:
@@ -101,8 +79,8 @@ class ServerModule(
                 view = PersistentServerView(
                     pin,
                     self.config,
-                    self.watcher,
                     self.db,
+                    self.sqldb,
                 )
                 view.message = message
                 view.channel = channel
@@ -118,7 +96,7 @@ class ServerModule(
     @app_commands.describe(ip="The ip of the server")
     @app_commands.describe(label="A user-friendly name to describe the server")
     async def servers_add(
-        self, interaction: discord.Interaction, ip: str, label: Optional[str]
+        self, interaction: discord.Interaction, ip: str, label: str | None
     ):
         """
         The /servers add command.
@@ -132,35 +110,18 @@ class ServerModule(
         await interaction.response.defer(thinking=True)
 
         # Create new guild if we need to
-        async with self.db.connect() as conn:
-            guild = await get_guild(interaction.guild, conn)
-            if guild is None:
-                guild = await create_guild(interaction.guild, conn)
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
 
-            await conn.commit()
+        # Register to server to MogiDB, allow the API to knock on our behalf
+        server = await self.db.create_server(
+            interaction.guild.id,
+            remote=ip,
+            label=label
+        )
 
-        server = await self.watcher.add(guild, remote=ip, label=label)
-
-        # Knock
-        try:
-            await server.knock()
-        except PacketError:
-            # Do nothing on packet errors
-            pass
-        except ConnectError:
-            # Do nothing on connect errors
-            pass
-
-        # Update label if the user passed no label
-        if server.server_name is not None:
-            async with self.db.connect() as conn:
-                try:
-                    await server.set_label(server.server_name, conn)
-                    await conn.commit()
-                except IntegrityError:
-                    pass
-
-        view = ServerView(self.config, self.db, server)
+        view = ServerView(self.config, self.db, guild, server)
         view.message = await interaction.followup.send(view=view)
         view.realtime()
 
@@ -181,23 +142,24 @@ class ServerModule(
             raise ValueError("Command not being called in a guild context?")
 
         # Create new guild if we need to
-        async with self.db.connect() as conn:
-            guild = await get_guild(interaction.guild, conn)
-            if guild is None:
-                guild = await create_guild(interaction.guild, conn)
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
 
-            await conn.commit()
+        assert guild.servers
 
         to_remove = set()
-        for server in self.watcher.iter(guild):
+        for server in guild.servers:
             # Check canonical name
             if server.remote == ip_or_label:
                 to_remove.add(server)
 
             # Check IP name
-            ip = f"{server.ip}:{server.port}"
-            if ip == ip_or_label:
-                to_remove.add(server)
+            # NOTE: MogiDB only presents canonical names, but this might come
+            # back later
+            # ip = f"{server.ip}:{server.port}"
+            # if ip == ip_or_label:
+            #     to_remove.add(server)
 
             # /remove removes one matched label or many ip matches
             if server.label == ip_or_label:
@@ -206,7 +168,7 @@ class ServerModule(
                 break
 
         for server in to_remove:
-            await self.watcher.remove(server)
+            await self.db.delete_server(guild.id, server.id)
 
         # Update persistent views
         await self.update_persistent(guild)
@@ -230,25 +192,20 @@ class ServerModule(
             raise ValueError("Command not being called in a guild context?")
 
         # Create new guild if we need to
-        async with self.db.connect() as conn:
-            guild = await get_guild(interaction.guild, conn)
-            if guild is None:
-                guild = await create_guild(interaction.guild, conn)
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
 
-            await conn.commit()
+        assert guild.servers
 
-        servers = []
-        for server in self.watcher.iter(guild):
-            servers.append(server)
-
-        if len(servers) == 0:
+        if len(guild.servers) == 0:
             await interaction.response.send_message(
                 "No servers added!\n"
                 f"Get this party started by adding a server w/ </servers add:{self.command.id}>"
             )
             return
 
-        view = ServerView(self.config, self.db, *servers)
+        view = ServerView(self.config, self.db, guild, *guild.servers)
         view.message = (await interaction.response.send_message(view=view)).resource
         view.realtime()
 
@@ -270,19 +227,18 @@ class ServerModule(
         assert isinstance(channel, discord.TextChannel)
 
         # Create new guild if we need to
-        async with self.db.connect() as conn:
-            guild = await get_guild(interaction.guild, conn)
-            if guild is None:
-                guild = await create_guild(interaction.guild, conn)
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
 
-            await conn.commit()
-            await guild.preload_boards(conn)
+        assert guild.servers
 
-            servers = []
-            for server in self.watcher.iter(guild):
-                servers.append(server)
+        # Create new guild if we need to
+        async with self.sqldb.connect() as conn:
+            # Do we really need to fetch the board list???
+            #boards = await list_boards(guild, conn)
 
-            if len(servers) == 0:
+            if len(guild.servers) == 0:
                 await interaction.response.send_message(
                     "No servers added!\n"
                     f"Get this party started by adding a server w/ </servers add:{self.command.id}>",
@@ -294,9 +250,9 @@ class ServerModule(
             view = next(filter(lambda v: v.obj.channel.id == channel.id, self.pinned_views), None)
             if view is None:
                 # Create new pinned
-                obj = await guild.add_board(channel, conn)
+                obj = await create_board(guild, channel, conn)
                 await conn.commit()
-                view = PersistentServerView(obj, self.config, self.watcher, self.db)
+                view = PersistentServerView(obj, self.config, self.db, self.sqldb)
 
             await view.update()
             await view.send(interaction.client)
@@ -309,14 +265,5 @@ class ServerModule(
 
     async def update_persistent(self, guild: Guild) -> None:
         for view in self.pinned_views:
-            if view.obj.parent.id == guild.id:
+            if view.obj.guild.id == guild.id:
                 await view.update()
-
-    @tasks.loop(seconds=30.0)
-    async def knock_servers(self) -> None:
-        for server in self.watcher.iter():
-            try:
-                await server.knock()
-            except Exception as e:
-                # Catch any exceptions
-                logger.error(e)
