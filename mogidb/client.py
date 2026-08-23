@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 
 from .dacite import FromDict
-from .model import ApiError as ErrorData, EventStatus
+from .model import ApiError as ErrorData, EventStatus, UpdateRoomOptions
 from .model import (
     Event,
     EventFormat,
@@ -179,10 +179,10 @@ class Client:
         channel_id: int,
         channel_name: str | None = None,
         enabled: bool | None = None,
-        options: RoomOptions | None = None
+        options: UpdateRoomOptions | None = None
     ) -> Room:
         if options is None:
-            options = RoomOptions()
+            options = UpdateRoomOptions()
 
         content = options.to_dict()
         if enabled is not None:

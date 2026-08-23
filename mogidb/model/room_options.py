@@ -30,8 +30,7 @@ class RoomOptions:
 
         # Time for trolling
         d = self.to_dict()
-        d |= other.to_dict()
-
+        d |= {k: v for k, v in other.to_dict().items() if v is not None}
         return RoomOptions.from_dict(d)
 
     def to_dict(self) -> dict[str, Any]:

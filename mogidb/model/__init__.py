@@ -11,9 +11,9 @@ from .room_options import RoomOptions
 from .server import GameServer, PlayerInfo, ServerInfo
 from .server_flags import ServerFlags
 from .team_mode import TeamMode
+from .update_room_options import UpdateRoomOptions
 from .user import User
 from .user_flags import UserFlags
-
 
 __all__ = [
     "ApiError",
@@ -32,6 +32,7 @@ __all__ = [
     "ServerFlags",
     "ServerInfo",
     "TeamMode",
+    "UpdateRoomOptions",
     "User",
     "UserFlags",
 ]
