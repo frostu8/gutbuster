@@ -1,0 +1,22 @@
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
+from typing import Any, Self
+
+import dacite
+
+
+@dataclass
+class ApiError:
+    """
+    An API error.
+    """
+
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, src: Mapping[str, Any]) -> Self:
+        from ..dacite import CONFIG
+        return dacite.from_dict(cls, src, CONFIG)
