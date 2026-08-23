@@ -59,6 +59,10 @@ class Event:
         else:
             user_id = user
 
+        # A user cannot be playing in a LFG event
+        if self.status == EventStatus.LFG:
+            return False
+
         playing = {p.user.id for p in self.players if not p.substitute}
         return user_id in playing
 

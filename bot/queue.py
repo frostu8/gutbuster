@@ -508,16 +508,26 @@ class QueueModule(Module):
             )
             return
 
+        # Get the currently active event
+        event = await self.db.get_current_event(room.guild.id, room.id)
+        if event is None:
+            # Users can create mogis by simply canning in a channel.
+            event = await self.db.create_event(room.guild.id, room.id)
+
         # If the player is already assigned a team in a started mogi, they
         # shouldn't be able to join another
         active_events = await self.db.list_events(room.guild.id, active=True, user_id=user.id)
-        for event in active_events:
-            assert event.room
+        for active_event in active_events:
+            assert active_event.room
 
-            if event.status != EventStatus.LFG and event.is_playing(user):
-                channel = interaction.client.get_channel(event.room.id)
+            # Skip the current event
+            if active_event.id == event.id:
+                continue
+
+            if active_event.is_playing(user):
+                channel = interaction.client.get_channel(active_event.room.id)
                 if channel is None:
-                    channel = interaction.client.fetch_channel(event.room.id)
+                    channel = interaction.client.fetch_channel(active_event.room.id)
 
                 assert isinstance(channel, discord.TextChannel), "Mogi in a non-guild context"
 
@@ -528,18 +538,13 @@ class QueueModule(Module):
                 )
                 return
 
-        # Get the currently active event
-        event = await self.db.get_current_event(room.guild.id, room.id)
-        if event is None:
-            # Users can create mogis by simply canning in a channel.
-            event = await self.db.create_event(room.guild.id, room.id)
-
         # Check if user is already canned
         if any(p.user.id == user.id for p in event.players):
-            await interaction.response.send_message(
-                f"{name}, you're already in the queue.\nUse </d:{self.command_drop.id}> to drop from the queue.",
-                ephemeral=True,
-            )
+            content = f"{name}, you're already in the queue.\n"
+            if not active_event.is_playing(user):
+                content += f"Use {self.command_drop.mention} to drop from the queue."
+
+            await interaction.response.send_message(content, ephemeral=True)
             return
         else:
             join_res = await self.db.join_event(room.guild.id, room.id, event.id, user.id)
@@ -594,7 +599,7 @@ class QueueModule(Module):
             )
             return
 
-        if event.status != EventStatus.LFG and event.is_playing(user):
+        if event.is_playing(user):
             # The player has already been assigned a team. They
             # shouldn't be able to /d
             await interaction.response.send_message(
