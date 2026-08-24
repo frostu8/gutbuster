@@ -6,8 +6,14 @@ from discord.app_commands import Choice, default_permissions
 
 import mogidb
 from bot.app import GroupModule, Module
-from bot.ui.room import RoleBlacklistModal, RoleWhitelistModal, RoomConfigView
-from mogidb import Unset
+from bot.ui.room import (
+    FormatDefaults,
+    FormatModal,
+    RoleBlacklistModal,
+    RoleWhitelistModal,
+    RoomConfigView,
+)
+from mogidb import ApiError, Unset
 from mogidb.model import FormatSelectionMode, TeamMode, UpdateRoomOptions
 
 
@@ -368,17 +374,11 @@ class RoomConfigModule(
         view = RoomConfigView(interaction.channel, room)
         await interaction.response.send_message(view=view, allowed_mentions=AllowedMentions.none(), ephemeral=True)
 
-    async def unset_autocomplete(
-        self,
-        _interaction: discord.Interaction,
-        current: str,
-    ) -> list[Choice[int] | Choice[str]]:
-        choices = [Choice(name=str(name), value=name.value) for name in list(OptionName)]
-        return [c for c in choices if current.lower() in c.name.lower()]
-
     @app_commands.command(name="unset", description="Unsets a config value, resetting it to default")
-    @app_commands.autocomplete(option=unset_autocomplete)
-    async def unset(self, interaction: discord.Interaction, option: int) -> None:
+    @app_commands.choices(option=[
+        Choice(name=str(name), value=name.value) for name in list(OptionName)
+    ])
+    async def unset(self, interaction: discord.Interaction, option: Choice[int]) -> None:
         """
         The /config unset command.
 
@@ -388,7 +388,7 @@ class RoomConfigModule(
         assert interaction.guild
         assert self.command_enable
 
-        name = OptionName(option)
+        name = OptionName(option.value)
 
         if not isinstance(interaction.channel, discord.TextChannel):
             await interaction.response.send_message(
@@ -512,18 +512,53 @@ class FormatConfigModule(
 ):
     db: mogidb.Client
 
+    command_enable: app_commands.AppCommand | None
+
     def __init__(self, db: mogidb.Client):
         self.db = db
+        self.command_enable = None
+
+    async def on_setup(self, tree: app_commands.CommandTree):
+        commands = await tree.fetch_commands()
+        self.command_enable = next(c for c in commands if c.name == "enable")
+
+    async def format_name_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[Choice[int] | Choice[str]]:
+        assert interaction.guild
+
+        # Skip calls in non text channels
+        if not isinstance(interaction.channel, discord.TextChannel):
+            return []
+
+        # Get or create guild
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            # Unconfigured guild means no formats
+            return []
+
+        # Fetch room, and check if it's enabled
+        room = await self.db.get_room(guild.id, interaction.channel.id)
+        if room is None:
+            # Unconfigured room means no formmats
+            return []
+        assert not isinstance(room.formats, Unset)
+
+        # Get server list
+        choices = [Choice(name=format.name, value=format.id) for format in room.formats]
+        return [c for c in choices if current.lower() in c.name.lower()]
 
     @app_commands.command(name="add", description="Adds a new format to the room")
-    @app_commands.choices(teams=[
+    @app_commands.choices(team_mode=[
         Choice(name=str(name), value=name.value) for name in list(TeamMode)
     ])
     async def add(
         self,
         interaction: discord.Interaction,
-        name: str,
-        teams: Choice[int] | None,
+        name: str | None,
+        team_mode: Choice[int] | None,
     ) -> None:
         """
         The /formats add command.
@@ -531,18 +566,137 @@ class FormatConfigModule(
         Adds a new format to the room.
         """
 
-        _team_mode = None
-        if teams is not None:
-            _team_mode = TeamMode(teams)
+        assert interaction.guild
+        assert self.command_enable
+
+        defaults = FormatDefaults()
+        if name is not None:
+            defaults.name = name
+        if team_mode is not None:
+            defaults.team_mode = TeamMode(team_mode.value)
+
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "This channel cannot be used to run mogis!",
+            )
+            return
+
+        # Get or create guild
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
+
+        # Fetch room, and check if it's enabled
+        room = await self.db.get_room(guild.id, interaction.channel.id)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel has not been enabled."
+                f" Try {self.command_enable.mention}ing the channel first.",
+            )
+            return
+
+        # Open up modal
+        modal = FormatModal(interaction.channel, room, None, self.db, defaults=defaults)
+        await interaction.response.send_modal(modal)
+
+    @app_commands.command(name="edit", description="Edits a room format")
+    @app_commands.autocomplete(format_id=format_name_autocomplete)
+    async def edit(self, interaction: discord.Interaction, format_id: int) -> None:
+        """
+        The /formats edit command.
+
+        Edits a format's details.
+        """
+
+        assert interaction.guild
+        assert self.command_enable
+
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "This channel cannot be used to run mogis!",
+            )
+            return
+
+        # Get or create guild
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
+
+        # Fetch room, and check if it's enabled
+        room = await self.db.get_room(guild.id, interaction.channel.id)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel has not been enabled."
+                f" Try {self.command_enable.mention}ing the channel first.",
+            )
+            return
+
+        # Fetch event format
+        format = await self.db.get_event_format(guild.id, room.id, format_id)
+        if format is None:
+            await interaction.response.send_message(
+                f"Format with id `{format_id}` not found.",
+                ephemeral=True,
+            )
+            return
+
+        # Open up modal
+        modal = FormatModal(interaction.channel, room, format, self.db)
+        await interaction.response.send_modal(modal)
+
 
     @app_commands.command(name="remove", description="Removes a format from the room")
+    @app_commands.autocomplete(format_id=format_name_autocomplete)
     async def remove(
         self,
         interaction: discord.Interaction,
-        name: str,
+        format_id: int,
     ) -> None:
         """
         The /formats remove command.
 
         Removes a new format from the room.
         """
+
+        assert interaction.guild
+        assert self.command_enable
+
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "This channel cannot be used to run mogis!",
+            )
+            return
+
+        # Get or create guild
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
+
+        # Fetch room, and check if it's enabled
+        room = await self.db.get_room(guild.id, interaction.channel.id)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel has not been enabled."
+                f" Try {self.command_enable.mention}ing the channel first.",
+            )
+            return
+
+        # Delete event format
+        try:
+            await self.db.delete_event_format(guild.id, room.id, format_id)
+
+            assert not isinstance(room.formats, Unset)
+            room.formats = [format for format in room.formats if format.id != format_id]
+        except ApiError as err:
+            if err.is_not_found():
+                await interaction.response.send_message(
+                    f"Format with id `{format_id}` not found.",
+                    ephemeral=True,
+                )
+                return
+            else:
+                raise
+
+        # Build up the config embed
+        view = RoomConfigView(interaction.channel, room)
+        await interaction.response.send_message(view=view, allowed_mentions=AllowedMentions.none(), ephemeral=True)

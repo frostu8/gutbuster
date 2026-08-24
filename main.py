@@ -10,7 +10,7 @@ import mogidb
 from bot.app import App
 from bot.config import load as load_config
 from bot.queue import QueueModule
-from bot.room import RoomConfigModule, RoomModule
+from bot.room import FormatConfigModule, RoomConfigModule, RoomModule
 from bot.server import ServerModule
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ app = App(intents=intents)
 # Load commands
 app.add_module(RoomModule(db))
 app.add_module(RoomConfigModule(db))
+app.add_module(FormatConfigModule(db))
 app.add_module(QueueModule(config, app, db, sqldb))
 app.add_module(ServerModule(config, db, sqldb, app))
 

@@ -1,12 +1,27 @@
+import dataclasses
 import traceback
 from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Final, Self, override
 
 import discord
-from discord import AllowedMentions, SeparatorSpacing, ui
+from discord import (
+    AllowedMentions,
+    RadioGroupOption,
+    SelectOption,
+    SeparatorSpacing,
+    ui,
+)
 
 import mogidb
 from mogidb import Unset
-from mogidb.model import FormatSelectionMode, Room, UpdateRoomOptions
+from mogidb.model import (
+    EventFormat,
+    FormatSelectionMode,
+    Room,
+    TeamMode,
+    UpdateRoomOptions,
+)
 
 
 class Seconds:
@@ -144,6 +159,12 @@ class RoomConfigContainer(ui.Container):
         else:
             content += role_list(role_map[id] for id in settings.role_whitelist)
 
+        content += (
+            "\nBy default, this list is empty and does nothing. When there are "
+            "roles here, **only** members with at least one role in this list "
+            "are allowed to can in the room."
+        )
+
         # == ROLE BLACKLIST ==
         content += "\n\n**Role blacklist** <> "
         if settings.role_blacklist is None:
@@ -151,6 +172,12 @@ class RoomConfigContainer(ui.Container):
             content += f"*{role_list(role_map[id] for id in guild_settings.role_blacklist)}*"
         else:
             content += role_list(role_map[id] for id in settings.role_blacklist)
+
+        content += (
+            "\nBy default, this list is empty. Members with *any* of these roles "
+            "are not permitted to can in this room, even if they have a "
+            "whitelist role."
+        )
 
         self.add_item(ui.TextDisplay(content))
 
@@ -191,7 +218,7 @@ class BaseRoleModal(ui.Modal):
     channel: discord.TextChannel
     room: Room
 
-    header: ui.TextDisplay
+    _description: ui.TextDisplay
     _roles: ui.Label
 
     def __init__(self, channel: discord.TextChannel, room: Room, db: mogidb.Client, *, timeout: float | None = 180):
@@ -201,7 +228,7 @@ class BaseRoleModal(ui.Modal):
         self.channel = channel
         self.room = room
 
-        self.header = ui.TextDisplay(self.header_content())
+        self._description = ui.TextDisplay(self.description)
         self._roles = ui.Label(
             text=self.label(),
             component=ui.RoleSelect(
@@ -211,7 +238,7 @@ class BaseRoleModal(ui.Modal):
             )
         )
 
-        self.add_item(self.header)
+        self.add_item(self._description)
         self.add_item(self._roles)
 
     @property
@@ -219,12 +246,14 @@ class BaseRoleModal(ui.Modal):
         assert isinstance(self._roles.component, ui.RoleSelect)
         return self._roles.component.values
 
-    def header_content(self) -> str:
+    @property
+    def description(self) -> str:
         raise NotImplementedError()
 
     def label(self) -> str:
         raise NotImplementedError()
 
+    @override
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
         await interaction.response.send_message("Oops! Something went wrong.", ephemeral=True)
 
@@ -245,6 +274,7 @@ class RoleWhitelistModal(BaseRoleModal, title="Role whitelist"):
 
         self._roles.component.default_values = whitelist
 
+    @override
     async def on_submit(self, interaction: discord.Interaction):
         assert self.room.guild
 
@@ -265,9 +295,11 @@ class RoleWhitelistModal(BaseRoleModal, title="Role whitelist"):
             ephemeral=True,
         )
 
-    def header_content(self) -> str:
+    @property
+    @override
+    def description(self) -> str:
         return (
-            f"*Editing the room's ({self.channel.mention}) whitelist.*\n"
+            f"*Editing room {self.channel.mention}'s whitelist.*\n"
             "By default, this list is empty and does nothing. When there are "
             "roles here, **only** members with at least one role in this list "
             "are allowed to can in the room.\n\n"
@@ -275,6 +307,7 @@ class RoleWhitelistModal(BaseRoleModal, title="Role whitelist"):
             "when reaching queue milestones or when /ping is sent."
         )
 
+    @override
     def label(self) -> str:
         return "Whitelist"
 
@@ -292,6 +325,7 @@ class RoleBlacklistModal(BaseRoleModal, title="Role blacklist"):
 
         self._roles.component.default_values = blacklist
 
+    @override
     async def on_submit(self, interaction: discord.Interaction):
         assert self.room.guild
 
@@ -312,13 +346,193 @@ class RoleBlacklistModal(BaseRoleModal, title="Role blacklist"):
             ephemeral=True,
         )
 
-    def header_content(self) -> str:
+    @property
+    @override
+    def description(self) -> str:
         return (
-            f"*Editing the room's ({self.channel.mention}) blacklist.*\n"
+            f"*Editing room {self.channel.mention}'s blacklist.*\n"
             "By default, this list is empty. Members with *any* of these roles "
             "are not permitted to can in this room, even if they have a "
             "whitelist role."
         )
 
+    @override
     def label(self) -> str:
         return "Blacklist"
+
+
+TEAM_MODE_DESCRIPTION: Final = {
+    TeamMode.FFA: "Each player plays for their own score.",
+    TeamMode.TWO_TEAMS: "Players are sorted into two different teams.",
+    TeamMode.THREE_TEAMS: "Players are sorted into three different teams.",
+    TeamMode.FOUR_TEAMS: "Players are sorted into four different teams.",
+}
+
+
+@dataclass
+class FormatDefaults:
+    name: str = ""
+    team_mode: TeamMode = TeamMode.FFA
+    servers: set[int] = dataclasses.field(default_factory=set)
+
+    @classmethod
+    def from_format(cls, format: EventFormat) -> Self:
+        assert not isinstance(format.servers, Unset)
+        return cls(
+            name=format.name,
+            team_mode=format.team_mode,
+            servers={server.id for server in format.servers}
+        )
+
+
+class FormatModal(ui.Modal, title="Edit format"):
+    db: mogidb.Client
+    channel: discord.TextChannel
+    room: Room
+    format_id: int | None
+
+    _description: ui.TextDisplay
+
+    _name: ui.Label
+    _team_mode: ui.Label
+    _servers: ui.Label
+
+    def __init__(
+        self,
+        channel: discord.TextChannel,
+        room: Room,
+        format: EventFormat | None,
+        db: mogidb.Client,
+        *,
+        defaults: FormatDefaults | None = None,
+        timeout: float | None = 180,
+    ):
+        super().__init__(timeout=timeout)
+
+        assert room.guild, "Expected guilds to be loaded"
+        assert not isinstance(room.guild.servers, Unset)
+
+        self.db = db
+        self.channel = channel
+        self.room = room
+        self.format_id = None
+
+        guild_servers = room.guild.servers
+
+        # Set defaults for when an event isn't providedd
+        defaults = defaults or FormatDefaults()
+        if format is not None:
+            self.format_id = format.id
+            defaults = FormatDefaults.from_format(format)
+
+        self._name = ui.Label(
+            text="Name",
+            description=(
+                "How the format will display in queues and config. "
+                "Make it unique!"
+            ),
+            component=ui.TextInput(min_length=2, default=defaults.name),
+        )
+        self._team_mode = ui.Label(
+            text="Team mode",
+            description="Determines how Gutbuster will sort and display teams.",
+            component=ui.RadioGroup(options=[
+                RadioGroupOption(
+                    label=str(mode),
+                    value=str(mode.value),
+                    description=TEAM_MODE_DESCRIPTION[mode],
+                    default=mode == defaults.team_mode
+                )
+                for mode in list(TeamMode)
+            ]),
+        )
+        self._servers = ui.Label(
+            text="Servers",
+            description="Servers to use when the format is selected.",
+            component=ui.Select(
+                placeholder="Select servers",
+                min_values=0,
+                max_values=len(guild_servers),
+                required=False,
+                options=[
+                    SelectOption(
+                        label=server.label,
+                        value=str(server.id),
+                        description=server.note,
+                        emoji="🔴" if server.info is None else "🟢",
+                        default=server.id not in defaults.servers
+                    )
+                    for server in guild_servers
+                ],
+            ),
+        )
+
+        self._description = ui.TextDisplay(self.description)
+
+        self.add_item(self._description)
+        self.add_item(self._name)
+        self.add_item(self._team_mode)
+        self.add_item(self._servers)
+
+    @property
+    def description(self) -> str:
+        assert isinstance(self._name.component, ui.TextInput)
+        name = self._name.component.value
+
+        if len(name) > 0:
+            return (
+                f"*Editing format* **{name}** "
+                f"*for room {self.channel.mention}.*"
+            )
+        else:
+            return f"*Creating new format for room {self.channel.mention}.*"
+
+    @override
+    async def on_submit(self, interaction: discord.Interaction):
+        assert self.room.guild
+        assert not isinstance(self.room.formats, Unset)
+
+        assert isinstance(self._name.component, ui.TextInput)
+        assert isinstance(self._team_mode.component, ui.RadioGroup)
+        assert isinstance(self._servers.component, ui.Select)
+
+        # Get new format info
+        name = self._name.component.value
+        team_mode = TeamMode(int(self._team_mode.component.value))
+
+        servers = [int(id) for id in self._servers.component.values]
+
+        # Delete old format if it exists
+        if self.format_id is not None:
+            await self.db.delete_event_format(self.room.guild.id, self.room.id, self.format_id)
+
+            # Update local copy
+            self.room.formats = [format for format in self.room.formats if format.id != self.format_id]
+            self.format_id = None
+
+        # Create new format
+        new_format = await self.db.create_event_format(
+            self.room.guild.id,
+            self.room.id,
+            name,
+            team_mode,
+            servers,
+        )
+
+        # Update local copy
+        self.room.formats.append(new_format)
+
+        view = RoomConfigView(self.channel, self.room)
+        await interaction.response.send_message(
+            view=view,
+            allowed_mentions=AllowedMentions.none(),
+            ephemeral=True,
+        )
+
+    @override
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        await interaction.response.send_message("Oops! Something went wrong.", ephemeral=True)
+
+        # Make sure we know what the error actually is
+        traceback.print_exception(type(error), error, error.__traceback__)
+
