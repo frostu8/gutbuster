@@ -1,11 +1,11 @@
-import discord
-import asyncio
-import logging
 import inspect
+import logging
 import re
-from sqlalchemy.ext.asyncio import AsyncEngine
+from collections.abc import Awaitable
+from typing import Any, ClassVar, Self
+
+import discord
 from discord import app_commands
-from typing import List, Any, Self, ClassVar, Optional, Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class ModuleMeta(type):
 
                     module_app_commands[elem] = value
 
-        new_cls.__app_commands__: List[app_commands.Command[app_commands.Group, ..., Any]] = list(module_app_commands.values())
+        new_cls.__app_commands__: list[app_commands.Command[app_commands.Group, ..., Any]] = list(module_app_commands.values())
 
         return new_cls
 
@@ -67,12 +67,12 @@ class Module(metaclass=ModuleMeta):
     This is meant to be a lightweight form of discordpy's Cogs.
     """
 
-    __app_commands__: List[app_commands.Command[app_commands.Group, ..., Any]]
+    __app_commands__: list[app_commands.Command[app_commands.Group, ..., Any]]
     __is_app_command_group__: ClassVar[bool] = False
-    __app_commands_group__: Optional[app_commands.Group]
+    __app_commands_group__: app_commands.Group | None
     __group_name__: str
     __group_description__: str
-    __group_default_permissions__: Optional[discord.Permissions]
+    __group_default_permissions__: discord.Permissions | None
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         self = super().__new__(cls)
@@ -118,21 +118,18 @@ class Module(metaclass=ModuleMeta):
         Called during setup phase, after commands are registered.
         """
 
-        pass
 
     def on_ready(self) -> None | Awaitable[None]:
         """
         Called when a connection is established to the gateway.
         """
 
-        pass
 
     def on_message(self, message: discord.Message) -> None | Awaitable[None]:
         """
         Called when a message is received over the gateway
         """
 
-        pass
 
     def on_interaction(self, interaction: discord.Interaction) -> None | Awaitable[None]:
         pass
@@ -153,7 +150,7 @@ class App(discord.Client):
     user: discord.ClientUser
     tree: app_commands.CommandTree
 
-    modules: List[Module]
+    modules: list[Module]
 
     def __init__(self, *, intents: discord.Intents):
         super().__init__(intents=intents)

@@ -1,4 +1,3 @@
-import mogidb
 import datetime
 from dataclasses import dataclass
 from datetime import UTC
@@ -7,6 +6,7 @@ import discord
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.sql import text
 
+import mogidb
 from mogidb.model import Guild
 
 

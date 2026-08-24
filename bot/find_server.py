@@ -7,7 +7,7 @@ from mogidb.model import Event, EventFormat, EventStatus, GameServer
 logger = logging.getLogger(__name__)
 
 
-async def find_server(event: Event, *, format: EventFormat | None, db: mogidb.Client) -> GameServer | None:
+async def find_server(event: Event, *, format: EventFormat | None = None, db: mogidb.Client) -> GameServer | None:
     """
     Finds an available server for a mogi.
     """

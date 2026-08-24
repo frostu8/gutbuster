@@ -16,7 +16,14 @@ from bot.app import Module
 from bot.config import Config
 from bot.find_server import find_server
 from bot.ui import FormatSelector, FormatVote, QueueStatus
-from mogidb.model import Event, EventFormat, EventStatus, FormatSelectionMode, User, Room
+from mogidb.model import (
+    Event,
+    EventFormat,
+    EventStatus,
+    FormatSelectionMode,
+    Room,
+    User,
+)
 
 logger = logging.getLogger(__name__)
 

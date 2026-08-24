@@ -92,7 +92,7 @@ class GameServer:
     note: str | None
     info: ServerInfo | None
     last_update_time: datetime | None
-    guild: "Guild | Unset" = UNSET
+    guild: "Guild | Unset" = UNSET  # noqa: UP037
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -531,9 +531,9 @@ class FormatConfigModule(
         Adds a new format to the room.
         """
 
-        team_mode = None
+        _team_mode = None
         if teams is not None:
-            team_mode = TeamMode(teams)
+            _team_mode = TeamMode(teams)
 
     @app_commands.command(name="remove", description="Removes a format from the room")
     async def remove(

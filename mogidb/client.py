@@ -1,20 +1,21 @@
-from asyncio import EventLoop
 from typing import Any
 
 import httpx
 
 from .dacite import FromDict
-from .model import ApiError as ErrorData, EventStatus, UpdateRoomOptions
+from .model import ApiError as ErrorData
 from .model import (
     Event,
     EventFormat,
     EventParticipant,
+    EventStatus,
     GameServer,
     Guild,
     JoinEventResponse,
     Room,
     RoomOptions,
     TeamMode,
+    UpdateRoomOptions,
     User,
 )
 

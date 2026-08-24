@@ -1,4 +1,3 @@
-from mogidb import Unset
 import logging
 
 import discord
@@ -10,6 +9,7 @@ from bot.app import GroupModule
 from bot.boards import create_board, list_all_boards
 from bot.config import Config
 from bot.ui.server import PersistentServerView, ServerView
+from mogidb import Unset
 from mogidb.model import Guild
 
 logger = logging.getLogger(__name__)

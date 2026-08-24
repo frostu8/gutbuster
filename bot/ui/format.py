@@ -1,4 +1,3 @@
-from bot.find_server import find_server
 import logging
 import math
 import random
@@ -11,7 +10,7 @@ from discord import AllowedMentions, ButtonStyle, ui
 
 import mogidb
 from bot.config import Config
-from mogidb import Unset
+from bot.find_server import find_server
 from mogidb.model import Event, EventFormat, User
 
 from .queue import QueueStatus
