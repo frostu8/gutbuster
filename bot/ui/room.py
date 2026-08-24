@@ -395,7 +395,7 @@ class FormatModal(ui.Modal, title="Edit format"):
 
     _name: ui.Label
     _team_mode: ui.Label
-    _servers: ui.Label
+    _servers: ui.Label | None
 
     def __init__(
         self,
@@ -420,10 +420,11 @@ class FormatModal(ui.Modal, title="Edit format"):
         guild_servers = room.guild.servers
 
         # Set defaults for when an event isn't providedd
-        defaults = defaults or FormatDefaults()
         if format is not None:
             self.format_id = format.id
             defaults = FormatDefaults.from_format(format)
+        else:
+            defaults = defaults or FormatDefaults()
 
         self._name = ui.Label(
             text="Name",
@@ -446,33 +447,38 @@ class FormatModal(ui.Modal, title="Edit format"):
                 for mode in list(TeamMode)
             ]),
         )
-        self._servers = ui.Label(
-            text="Servers",
-            description="Servers to use when the format is selected.",
-            component=ui.Select(
-                placeholder="Select servers",
-                min_values=0,
-                max_values=len(guild_servers),
-                required=False,
-                options=[
-                    SelectOption(
-                        label=server.label,
-                        value=str(server.id),
-                        description=server.note,
-                        emoji="🔴" if server.info is None else "🟢",
-                        default=server.id not in defaults.servers
-                    )
-                    for server in guild_servers
-                ],
-            ),
-        )
+
+        if len(guild_servers) > 0:
+            self._servers = ui.Label(
+                text="Servers",
+                description="Servers to use when the format is selected.",
+                component=ui.Select(
+                    placeholder="Select servers",
+                    min_values=0,
+                    max_values=len(guild_servers),
+                    required=False,
+                    options=[
+                        SelectOption(
+                            label=server.label,
+                            value=str(server.id),
+                            description=server.note,
+                            emoji="🔴" if server.info is None else "🟢",
+                            default=server.id in defaults.servers
+                        )
+                        for server in guild_servers
+                    ],
+                ),
+            )
+        else:
+            self._servers = None
 
         self._description = ui.TextDisplay(self.description)
 
         self.add_item(self._description)
         self.add_item(self._name)
         self.add_item(self._team_mode)
-        self.add_item(self._servers)
+        if self._servers:
+            self.add_item(self._servers)
 
     @property
     def description(self) -> str:
@@ -494,13 +500,16 @@ class FormatModal(ui.Modal, title="Edit format"):
 
         assert isinstance(self._name.component, ui.TextInput)
         assert isinstance(self._team_mode.component, ui.RadioGroup)
-        assert isinstance(self._servers.component, ui.Select)
 
         # Get new format info
         name = self._name.component.value
         team_mode = TeamMode(int(self._team_mode.component.value))
 
-        servers = [int(id) for id in self._servers.component.values]
+        if self._servers:
+            assert isinstance(self._servers.component, ui.Select)
+            servers = [int(id) for id in self._servers.component.values]
+        else:
+            servers = []
 
         # Delete old format if it exists
         if self.format_id is not None:

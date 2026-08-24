@@ -236,26 +236,6 @@ class Client:
         req = self.client.build_request("GET", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/formats/{format_id}")
         return await self._req_optional(req, EventFormat)
 
-    async def update_event_format(
-        self,
-        guild_id: int,
-        channel_id: int,
-        format_id: int,
-        name: str | None = None,
-        team_mode: TeamMode | None = None,
-        servers: list[int] | None = None,
-    ) -> EventFormat:
-        content: dict[str, Any] = {}
-        if name is not None:
-            content["name"] = name
-        if servers is not None:
-            content["servers"] = servers
-        if team_mode is not None:
-            content["team_mode"] = team_mode.value
-
-        req = self.client.build_request("PATCH", f"{self._base_url}/guilds/{guild_id}/rooms/{channel_id}/formats/{format_id}", json=content)
-        return await self._req(req, EventFormat)
-
     async def delete_event_format(
         self,
         guild_id: int,
