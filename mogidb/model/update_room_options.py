@@ -1,5 +1,8 @@
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Self
+
+import dacite
 
 from ..types import UNSET, Unset
 from .format_selection_mode import FormatSelectionMode
@@ -20,6 +23,8 @@ class UpdateRoomOptions:
     decay_after: int | None | Unset = UNSET
     inactivity_warning_after: int | None | Unset = UNSET
     inactivity_drop_after: int | None | Unset = UNSET
+    role_blacklist: list[int] | None | Unset = UNSET
+    role_whitelist: list[int] | None | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -29,3 +34,8 @@ class UpdateRoomOptions:
                 d.pop(key)
 
         return d
+
+    @classmethod
+    def from_dict(cls, src: Mapping[str, Any]) -> Self:
+        from ..dacite import CONFIG
+        return dacite.from_dict(cls, src, CONFIG)

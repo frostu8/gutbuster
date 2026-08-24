@@ -1,13 +1,13 @@
-from mogidb import Unset
 from enum import IntEnum
 
 import discord
-from discord import app_commands
+from discord import AllowedMentions, app_commands
 from discord.app_commands import Choice, default_permissions
 
 import mogidb
 from bot.app import GroupModule, Module
-from bot.ui.room import RoomConfigView
+from bot.ui.room import RoleBlacklistModal, RoleWhitelistModal, RoomConfigView
+from mogidb import Unset
 from mogidb.model import FormatSelectionMode, TeamMode, UpdateRoomOptions
 
 
@@ -196,6 +196,7 @@ class RoomModule(Module):
         view = RoomConfigView(interaction.channel, room)
         await interaction.response.send_message(
             view=view,
+            allowed_mentions=AllowedMentions.none(),
             ephemeral=True,
         )
 
@@ -208,6 +209,8 @@ class OptionName(IntEnum):
     MAX_PLAYERS = 5
     VOTES_REQUIRED = 6
     FORMAT_SELECTION_MODE = 7
+    ROLE_WHITELIST = 8
+    ROLE_BLACKLIST = 9
 
     def __str__(self) -> str:
         match self.value:
@@ -225,6 +228,10 @@ class OptionName(IntEnum):
                 return "Votes required"
             case self.FORMAT_SELECTION_MODE:
                 return "Format selection mode"
+            case self.ROLE_WHITELIST:
+                return "Role whitelist"
+            case self.ROLE_BLACKLIST:
+                return "Role blacklist"
             case _:
                 raise ValueError("Invalid value for ConfigOption")
 
@@ -343,27 +350,23 @@ class RoomConfigModule(
             return
 
         # Apply config options
-        options = UpdateRoomOptions()
-        if decay_after is not None:
-            options.decay_after = decay_after
-        if inactivity_warning_after is not None:
-            options.inactivity_warning_after = inactivity_warning_after
-        if inactivity_drop_after is not None:
-            options.inactivity_drop_after = inactivity_drop_after
-        if max_players is not None:
-            options.max_players = max_players
-        if players_required is not None:
-            options.players_required = players_required
-        if votes_required is not None:
-            options.votes_required = votes_required
-        if format_selection_mode is not None:
-            options.format_selection_mode = format_selection_mode
+        options = UpdateRoomOptions.from_dict({
+            k: v for k, v in {
+                "decay_after": decay_after,
+                "inactivity_warning_after": inactivity_warning_after,
+                "inactivity_drop_after": inactivity_drop_after,
+                "max_players": max_players,
+                "players_required": players_required,
+                "votes_required": votes_required,
+                "format_selection_mode": format_selection_mode,
+            }.items() if v is not None
+        })
 
         room = await self.db.update_room(guild.id, room.id, options=options)
 
         # Build up the config embed
         view = RoomConfigView(interaction.channel, room)
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.send_message(view=view, allowed_mentions=AllowedMentions.none(), ephemeral=True)
 
     async def unset_autocomplete(
         self,
@@ -424,13 +427,82 @@ class RoomConfigModule(
             options.max_players = None
         if name == OptionName.FORMAT_SELECTION_MODE:
             options.format_selection_mode = None
+        if name == OptionName.ROLE_BLACKLIST:
+            options.role_blacklist = None
+        if name == OptionName.ROLE_WHITELIST:
+            options.role_whitelist = None
             
         room = await self.db.update_room(guild.id, room.id, options=options)
 
         # Build up the config embed
         view = RoomConfigView(interaction.channel, room)
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.send_message(view=view, allowed_mentions=AllowedMentions.none(), ephemeral=True)
 
+    @app_commands.command(name="whitelist", description="Edit the queue whitelist")
+    async def whitelist(self, interaction: discord.Interaction) -> None:
+        """
+        The /config whitelist command.
+
+        Edits the queue whitelist.
+        """
+
+        assert interaction.guild
+        assert self.command_enable
+
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "This channel cannot be used to run mogis!",
+            )
+            return
+
+        # Get or create guild
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
+
+        # Fetch room, and check if it's enabled
+        room = await self.db.get_room(guild.id, interaction.channel.id)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel has not been enabled."
+                f" Try {self.command_enable.mention}ing the channel first.",
+            )
+            return
+
+        await interaction.response.send_modal(RoleWhitelistModal(interaction.channel, room, self.db))
+
+    @app_commands.command(name="blacklist", description="Edit the queue blacklist")
+    async def blacklist(self, interaction: discord.Interaction) -> None:
+        """
+        The /config blacklist command.
+
+        Edits the queue blacklist.
+        """
+
+        assert interaction.guild
+        assert self.command_enable
+
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "This channel cannot be used to run mogis!",
+            )
+            return
+
+        # Get or create guild
+        guild = await self.db.get_guild(interaction.guild.id)
+        if guild is None:
+            guild = await self.db.create_guild(interaction.guild.id)
+
+        # Fetch room, and check if it's enabled
+        room = await self.db.get_room(guild.id, interaction.channel.id)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel has not been enabled."
+                f" Try {self.command_enable.mention}ing the channel first.",
+            )
+            return
+
+        await interaction.response.send_modal(RoleBlacklistModal(interaction.channel, room, self.db))
 
 class FormatConfigModule(
     GroupModule,

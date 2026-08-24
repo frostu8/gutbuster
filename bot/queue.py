@@ -1,4 +1,3 @@
-from bot.find_server import find_server
 import asyncio
 import logging
 import math
@@ -15,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 import mogidb
 from bot.app import Module
 from bot.config import Config
+from bot.find_server import find_server
 from bot.ui import FormatSelector, FormatVote, QueueStatus
-from mogidb.model import Event, EventFormat, EventStatus, FormatSelectionMode, User
-from mogidb.types import Unset
+from mogidb.model import Event, EventFormat, EventStatus, FormatSelectionMode, User, Room
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +257,53 @@ class QueueModule(Module):
     async def on_interaction(self, interaction: discord.Interaction):
         await self.activity.on_interaction(interaction)
 
+    async def ping_subjects(self, room: Room, event: Event | None, *, client: discord.Client):
+        """
+        Pings the fools that dare enter the Mogi Zone.
+        """
+
+        assert room.guild
+
+        channel = client.get_channel(room.id)
+        if not isinstance(channel, discord.TextChannel):
+            channel = await client.fetch_channel(room.id)
+        if not isinstance(channel, discord.TextChannel):
+            raise TypeError("Mogi can only take place in a guild channel")
+
+        role_map = {role.id: role for role in channel.guild.roles}
+
+        content = ""
+        mention_roles: list[discord.Role] = []
+
+        # Follow the rules:
+        # 1. Is a whitelist defined? Ping those guys.
+        if len(room.role_whitelist) > 0:
+            for i, role_id in enumerate(room.role_whitelist):
+                role = role_map[role_id]
+                mention_roles.append(role)
+
+                if i > 0:
+                    content += f" {role.mention}"
+                else:
+                    content += role.mention
+        # 2. Fall through, don't ping ANYONE!!!
+        else:
+            return
+
+        # Append waiting player count
+        if event is None:
+            needed_players = room.players_required
+        else:
+            needed_players = room.players_required - len(event.players)
+        content += f" +{needed_players}"
+
+        await channel.send(
+            content=content,
+            allowed_mentions=AllowedMentions(
+                roles=mention_roles,
+            ),
+        )
+
     async def start_vote(
         self,
         event: Event,
@@ -269,8 +315,8 @@ class QueueModule(Module):
         assert event.room.guild
 
         channel = client.get_channel(event.room.id)
-        if isinstance(channel, discord.Object):
-            channel = await client.fetch_channel(channel.id)
+        if not isinstance(channel, discord.TextChannel):
+            channel = await client.fetch_channel(event.room.id)
         if not isinstance(channel, discord.TextChannel):
             raise TypeError("Mogi can only take place in a guild channel")
 
@@ -303,8 +349,8 @@ class QueueModule(Module):
         guild = event.room.guild
 
         channel = client.get_channel(event.room.id)
-        if isinstance(channel, discord.Object):
-            channel = await client.fetch_channel(channel.id)
+        if not isinstance(channel, discord.TextChannel):
+            channel = await client.fetch_channel(event.room.id)
         if not isinstance(channel, discord.TextChannel):
             raise TypeError("Mogi can only take place in a guild channel")
 
@@ -376,8 +422,8 @@ class QueueModule(Module):
 
         # Notify players in the channel
         channel = client.get_channel(room.id)
-        if isinstance(channel, discord.Object):
-            channel = await client.fetch_channel(channel.id)
+        if not isinstance(channel, discord.TextChannel):
+            channel = await client.fetch_channel(room.id)
         if not isinstance(channel, discord.TextChannel):
             raise TypeError("Mogi can only take place in a guild channel")
 
@@ -476,6 +522,8 @@ class QueueModule(Module):
             # Ignore any user commands
             raise TypeError("Command not being called in a guild context?")
 
+        assert isinstance(interaction.user, discord.Member)
+
         name = interaction.user.display_name
 
         # Fetch the user from the database
@@ -528,6 +576,32 @@ class QueueModule(Module):
                     ephemeral=True,
                 )
                 return
+
+        # Check if user is in the blacklist... if so, they can't can here.
+        blacklist = {id for id in room.role_blacklist}
+        blacklisted_roles = [role for role in interaction.user.roles if role.id in blacklist]
+
+        if len(blacklisted_roles) > 0:
+            # Get the first role that blacklisted them
+            role = blacklisted_roles.pop()
+
+            await interaction.response.send_message(
+                f"{name}, you are blacklisted from playing in this queue.\n"
+                f"*Blame: {role.mention}*",
+                allowed_mentions=AllowedMentions.none(),
+            )
+            return
+
+        # Check if user is in the whitelist before allowing them to can.
+        whitelist = {id for id in room.role_whitelist}
+        whitelisted_roles = [role for role in interaction.user.roles if role.id in whitelist]
+
+        if len(whitelisted_roles) == 0:
+            await interaction.response.send_message(
+                f"{name}, you are not whitelisted to play in this queue.",
+                ephemeral=True,
+            )
+            return
 
         # Check if user is already canned
         if any(p.user.id == user.id for p in event.players):
@@ -872,6 +946,30 @@ class QueueModule(Module):
     async def esn(self, interaction: discord.Interaction):
         await self._command_end(interaction)
 
+    @app_commands.command(name="ping", description="Notifies associated roles of a gathering mogi")
+    async def command_ping(self, interaction: discord.Interaction):
+        assert interaction.guild
+
+        if not isinstance(interaction.channel, TextChannel):
+            # Ignore any user commands
+            raise TypeError("Command not being called in a guild context?")
+
+        # Get the room
+        room = await self.db.get_room(interaction.guild.id, interaction.channel.id)
+        if room is None or not room.enabled:
+            await interaction.response.send_message(
+                "This channel isn't set up for mogis!",
+                ephemeral=True,
+            )
+            return
+        assert room.guild
+
+        # Get the currently active event
+        event = await self.db.get_current_event(room.guild.id, room.id)
+        await self.ping_subjects(room, event, client=interaction.client)
+
+        # Tell user we did a good job :D
+        await interaction.response.send_message(content="👍", ephemeral=True)
 
     @app_commands.command(name="clear", description="Ends the current mogi forcefully")
     @default_permissions(None)

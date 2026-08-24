@@ -1,8 +1,12 @@
-import discord
-from discord import ui, SeparatorSpacing
+import traceback
+from collections.abc import Iterable
 
+import discord
+from discord import AllowedMentions, SeparatorSpacing, ui
+
+import mogidb
 from mogidb import Unset
-from mogidb.model import FormatSelectionMode, Room
+from mogidb.model import FormatSelectionMode, Room, UpdateRoomOptions
 
 
 class Seconds:
@@ -27,6 +31,14 @@ class Seconds:
             return f"{seconds}s"
 
 
+def role_list(roles: Iterable[discord.Role]) -> str:
+    roles = list(roles)
+    if len(roles) > 0:
+        return " ".join([role.mention for role in roles])
+    else:
+        return "Empty"
+
+
 class RoomConfigContainer(ui.Container):
     channel: discord.TextChannel
     room: Room
@@ -41,7 +53,12 @@ class RoomConfigContainer(ui.Container):
         assert self.room.guild
         assert self.room.formats
 
+        assert self.channel.guild
+
         self.clear_items()
+
+        # Get role mapping
+        role_map = {role.id: role for role in self.channel.guild.roles}
 
         # Show the guild config
         content = f"## {self.channel.mention} queue config\n"
@@ -119,6 +136,22 @@ class RoomConfigContainer(ui.Container):
         if self.room.format_selection_mode != FormatSelectionMode.VOTE:
             content += "\n*Only applicable when format selection is set to Vote*"
 
+        # == ROLE WHITELIST ==
+        content += "\n\n**Role whitelist** <> "
+        if settings.role_whitelist is None:
+            assert guild_settings.role_whitelist is not None
+            content += f"*{role_list(role_map[id] for id in guild_settings.role_whitelist)}*"
+        else:
+            content += role_list(role_map[id] for id in settings.role_whitelist)
+
+        # == ROLE BLACKLIST ==
+        content += "\n\n**Role blacklist** <> "
+        if settings.role_blacklist is None:
+            assert guild_settings.role_blacklist is not None
+            content += f"*{role_list(role_map[id] for id in guild_settings.role_blacklist)}*"
+        else:
+            content += role_list(role_map[id] for id in settings.role_blacklist)
+
         self.add_item(ui.TextDisplay(content))
 
         if len(self.room.formats) > 0:
@@ -152,4 +185,140 @@ class RoomConfigView(ui.LayoutView):
         self.container = RoomConfigContainer(channel, room)
         self.add_item(self.container)
 
-        
+
+class BaseRoleModal(ui.Modal):
+    db: mogidb.Client
+    channel: discord.TextChannel
+    room: Room
+
+    header: ui.TextDisplay
+    _roles: ui.Label
+
+    def __init__(self, channel: discord.TextChannel, room: Room, db: mogidb.Client, *, timeout: float | None = 180):
+        super().__init__(timeout=timeout)
+
+        self.db = db
+        self.channel = channel
+        self.room = room
+
+        self.header = ui.TextDisplay(self.header_content())
+        self._roles = ui.Label(
+            text=self.label(),
+            component=ui.RoleSelect(
+                placeholder=self.label(),
+                min_values=0,
+                max_values=10,
+            )
+        )
+
+        self.add_item(self.header)
+        self.add_item(self._roles)
+
+    @property
+    def roles(self) -> list[discord.Role]:
+        assert isinstance(self._roles.component, ui.RoleSelect)
+        return self._roles.component.values
+
+    def header_content(self) -> str:
+        raise NotImplementedError()
+
+    def label(self) -> str:
+        raise NotImplementedError()
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        await interaction.response.send_message("Oops! Something went wrong.", ephemeral=True)
+
+        # Make sure we know what the error actually is
+        traceback.print_exception(type(error), error, error.__traceback__)
+
+
+class RoleWhitelistModal(BaseRoleModal, title="Role whitelist"):
+    def __init__(self, channel: discord.TextChannel, room: Room, db: mogidb.Client, *, timeout: float | None = 180):
+        super().__init__(channel, room, db, timeout=timeout)
+        assert isinstance(self._roles.component, ui.RoleSelect)
+
+        # Get roles initializer
+        role_map = {role.id: role for role in self.channel.guild.roles}
+
+        whitelist = self.room.settings.role_whitelist or []
+        whitelist = [role_map[id] for id in whitelist]
+
+        self._roles.component.default_values = whitelist
+
+    async def on_submit(self, interaction: discord.Interaction):
+        assert self.room.guild
+
+        # Get role ids
+        new_whitelist = [role.id for role in self.roles]
+
+        # Push to server
+        self.room = await self.db.update_room(
+            self.room.guild.id,
+            self.room.id,
+            options=UpdateRoomOptions(role_whitelist=new_whitelist),
+        )
+
+        view = RoomConfigView(self.channel, self.room)
+        await interaction.response.send_message(
+            view=view,
+            allowed_mentions=AllowedMentions.none(),
+            ephemeral=True,
+        )
+
+    def header_content(self) -> str:
+        return (
+            f"*Editing the room's ({self.channel.mention}) whitelist.*\n"
+            "By default, this list is empty and does nothing. When there are "
+            "roles here, **only** members with at least one role in this list "
+            "are allowed to can in the room.\n\n"
+            "When this is set, the bot will tag the roles instead of @ here "
+            "when reaching queue milestones or when /ping is sent."
+        )
+
+    def label(self) -> str:
+        return "Whitelist"
+
+
+class RoleBlacklistModal(BaseRoleModal, title="Role blacklist"):
+    def __init__(self, channel: discord.TextChannel, room: Room, db: mogidb.Client, *, timeout: float | None = 180):
+        super().__init__(channel, room, db, timeout=timeout)
+        assert isinstance(self._roles.component, ui.RoleSelect)
+
+        # Get roles initializer
+        role_map = {role.id: role for role in self.channel.guild.roles}
+
+        blacklist = self.room.settings.role_blacklist or []
+        blacklist = [role_map[id] for id in blacklist]
+
+        self._roles.component.default_values = blacklist
+
+    async def on_submit(self, interaction: discord.Interaction):
+        assert self.room.guild
+
+        # Get role ids
+        new_blacklist = [role.id for role in self.roles]
+
+        # Push to server
+        self.room = await self.db.update_room(
+            self.room.guild.id,
+            self.room.id,
+            options=UpdateRoomOptions(role_blacklist=new_blacklist),
+        )
+
+        view = RoomConfigView(self.channel, self.room)
+        await interaction.response.send_message(
+            view=view,
+            allowed_mentions=AllowedMentions.none(),
+            ephemeral=True,
+        )
+
+    def header_content(self) -> str:
+        return (
+            f"*Editing the room's ({self.channel.mention}) blacklist.*\n"
+            "By default, this list is empty. Members with *any* of these roles "
+            "are not permitted to can in this room, even if they have a "
+            "whitelist role."
+        )
+
+    def label(self) -> str:
+        return "Blacklist"

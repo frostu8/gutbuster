@@ -96,5 +96,21 @@ class Room:
             return settings.votes_required
         else:
             return 4
+
+    @property
+    def role_whitelist(self) -> list[int]:
+        settings = self._settings()
+        if settings.role_whitelist is not None:
+            return settings.role_whitelist
+        else:
+            return []
+
+    @property
+    def role_blacklist(self) -> list[int]:
+        settings = self._settings()
+        if settings.role_blacklist is not None:
+            return settings.role_blacklist
+        else:
+            return []
     
     
