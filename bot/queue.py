@@ -596,7 +596,7 @@ class QueueModule(Module):
         whitelist = {id for id in room.role_whitelist}
         whitelisted_roles = [role for role in interaction.user.roles if role.id in whitelist]
 
-        if len(whitelisted_roles) == 0:
+        if len(whitelist) > 0 and len(whitelisted_roles) == 0:
             await interaction.response.send_message(
                 f"{name}, you are not whitelisted to play in this queue.",
                 ephemeral=True,
