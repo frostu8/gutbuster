@@ -103,14 +103,13 @@ class QueueStatusContainer(ui.Container):
                     if player.team_number is None:
                         continue
 
-                    discord_user = (
-                        player.user.discord_user_id is not None
-                        and self.client.get_user(player.user.discord_user_id)
-                    )
-                    if discord_user:
-                        mention = f"{discord_user.mention}"
-                    else:
-                        mention = f"@{player.user.display_name}"
+                    mention = f"{player.user.display_name}"
+                    if player.user.discord_user_id is not None:
+                        discord_user = self.client.get_user(player.user.discord_user_id)
+                        if discord_user is None:
+                            discord_user = await self.client.fetch_user(player.user.discord_user_id)
+
+                        mention = discord_user.mention
 
                     content += f" {mention}"
 
