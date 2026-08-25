@@ -28,6 +28,7 @@ async def find_server(event: Event, *, format: EventFormat | None = None, db: mo
     # Find server for queue
     if isinstance(selected_format.servers, Unset):
         # "Silently" fetch the format
+        # Generally this code path should never be reached.
         logger.info(f"Fetching format {selected_format.name} from server...")
         selected_format = await db.get_event_format(guild.id, room.id, selected_format.id) or selected_format
 
@@ -41,7 +42,8 @@ async def find_server(event: Event, *, format: EventFormat | None = None, db: mo
 
     servers = [server for server in selected_format.servers if server.id not in used_servers]
     if len(servers) > 0:
-        return servers.pop()
+        # Get first server
+        return servers[0]
     else:
         return None
 
