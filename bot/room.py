@@ -163,17 +163,7 @@ class RoomModule(Module):
         assert not isinstance(copy_from_room.formats, Unset)
 
         # First, copy config
-        # TODO: probably a better way of doing this
-        copy_options = copy_from_room.settings
-        options = UpdateRoomOptions(
-            decay_after = copy_options.decay_after,
-            inactivity_warning_after = copy_options.inactivity_warning_after,
-            inactivity_drop_after = copy_options.inactivity_drop_after,
-            max_players = copy_options.max_players,
-            players_required = copy_options.players_required,
-            votes_required = copy_options.votes_required,
-            format_selection_mode = copy_options.format_selection_mode,
-        )
+        options = UpdateRoomOptions.from_dict(copy_from_room.settings.to_dict())
 
         # Push config updates
         room = await self.db.update_room(guild.id, room.id, options=options)
