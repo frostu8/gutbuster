@@ -1,8 +1,10 @@
 import asyncio
+import dataclasses
 import logging
 import math
 import random
 from copy import copy
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import ceil
 
@@ -33,6 +35,17 @@ async def upsert_user(member: discord.User | discord.Member, db: mogidb.Client) 
         member.id,
         member.global_name or member.name,
     )
+
+
+
+@dataclass
+class PingResult:
+    """
+    The result of a ping.
+    """
+
+    content: str
+    allowed_mentions: AllowedMentions = dataclasses.field(default_factory=AllowedMentions.none)
 
 
 class UserActivity:
@@ -264,7 +277,13 @@ class QueueModule(Module):
     async def on_interaction(self, interaction: discord.Interaction):
         await self.activity.on_interaction(interaction)
 
-    async def ping_subjects(self, room: Room, event: Event | None, *, client: discord.Client):
+    async def ping_subjects(
+        self,
+        room: Room,
+        event: Event | None,
+        *,
+        client: discord.Client,
+    ) -> PingResult | None:
         """
         Pings the fools that dare enter the Mogi Zone.
         """
@@ -295,7 +314,7 @@ class QueueModule(Module):
                     content += role.mention
         # 2. Fall through, don't ping ANYONE!!!
         else:
-            return
+            return None
 
         # Append waiting player count
         if event is None:
@@ -304,11 +323,9 @@ class QueueModule(Module):
             needed_players = room.players_required - len(event.players)
         content += f" +{needed_players}"
 
-        await channel.send(
-            content=content,
-            allowed_mentions=AllowedMentions(
-                roles=mention_roles,
-            ),
+        return PingResult(
+            content,
+            allowed_mentions=AllowedMentions(roles=mention_roles),
         )
 
     async def start_vote(
@@ -973,10 +990,19 @@ class QueueModule(Module):
 
         # Get the currently active event
         event = await self.db.get_current_event(room.guild.id, room.id)
-        await self.ping_subjects(room, event, client=interaction.client)
 
-        # Tell user we did a good job :D
-        await interaction.response.send_message(content="👍", ephemeral=True)
+        result = await self.ping_subjects(room, event, client=interaction.client)
+        if result is None:
+            # Tell user we did a good job :D
+            await interaction.response.send_message(
+                content="No roles setup for tagging...",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                content=result.content,
+                allowed_mentions=result.allowed_mentions,
+            )
 
     @app_commands.command(name="clear", description="Ends the current mogi forcefully")
     @default_permissions(None)
