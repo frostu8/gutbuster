@@ -346,7 +346,7 @@ class FormatVote(ui.LayoutView):
         # Pull the event down again in case it was updated during voting
         self.event = await self.db.get_event(guild.id, room.id, self.event.id) or self.event
 
-        server = await find_server(self.event, db=self.db)
+        server = await find_server(self.event, format=self.selected_format, db=self.db)
 
         # Update event
         self.event = await self.db.update_event(
