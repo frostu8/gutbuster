@@ -495,7 +495,10 @@ class QueueModule(Module):
                     continue
 
                 # Unregister from event
-                await self.db.leave_event(guild.id, room.id, event.id, p.user.id)
+                await self.db.leave_event(guild.id,
+                                          canned.room.id,
+                                          canned.id,
+                                          p.user.id)
 
                 if canned.room.id not in uncanned:
                     uncanned[canned.room.id] = []
