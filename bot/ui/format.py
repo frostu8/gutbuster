@@ -40,6 +40,10 @@ class FormatSelectorContainer(ui.Container):
         # Generate header content
         content = ""
         for i, participant in enumerate(self.event.players):
+            # Skip subs
+            if participant.substitute:
+                continue
+
             mention = f"@{participant.user.display_name}"
             if participant.user.discord_user_id is not None:
                 discord_user = self.client.get_user(participant.user.discord_user_id)
@@ -274,13 +278,15 @@ class FormatVote(ui.LayoutView):
     async def update(self) -> None:
         header = ""
         for i, participant in enumerate(self.event.players):
-            user = participant.user
+            # Skip subs
+            if participant.substitute:
+                continue
 
-            mention = f"@{user.display_name}"
-            if user.discord_user_id is not None:
-                discord_user = self.client.get_user(user.discord_user_id)
+            mention = f"@{participant.user.display_name}"
+            if participant.user.discord_user_id is not None:
+                discord_user = self.client.get_user(participant.user.discord_user_id)
                 if discord_user is None:
-                    discord_user = await self.client.fetch_user(user.discord_user_id)
+                    discord_user = await self.client.fetch_user(participant.user.discord_user_id)
 
                 mention = discord_user.mention
 
