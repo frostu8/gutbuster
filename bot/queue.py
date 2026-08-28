@@ -416,6 +416,7 @@ class QueueModule(Module):
             client,
             self.db,
             event,
+            timeout=3000,
         )
         await view.update()
 

@@ -177,7 +177,7 @@ class QueueStatus(ui.LayoutView):
 
     _realtime_task: Task[None] | None
 
-    def __init__(self, config: Config, client: discord.Client, db: mogidb.Client, event: Event, *, timeout: float | None = 60*60):
+    def __init__(self, config: Config, client: discord.Client, db: mogidb.Client, event: Event, *, timeout: float | None = 3000):
         super().__init__(timeout=timeout)
 
         self.event = event
@@ -195,14 +195,16 @@ class QueueStatus(ui.LayoutView):
         room = self.event.room
         guild = self.event.room.guild
 
-        # Update the event
+        # Update the event on the view
         event = await self.db.get_event(guild.id, room.id, self.event.id)
         if event is None:
             # Event was removed?
             return
 
+        self.event = event
+
         # If needed, fetch user data into cache
-        for player in event.players:
+        for player in self.event.players:
             if player.user.discord_user_id is None:
                 continue
 
@@ -213,7 +215,7 @@ class QueueStatus(ui.LayoutView):
         # Refresh items
         self.clear_items()
 
-        container = QueueStatusContainer(self.config, self.client, event)
+        container = QueueStatusContainer(self.config, self.client, self.event)
         await container.update()
 
         self.add_item(container)
