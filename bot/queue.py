@@ -872,8 +872,13 @@ class QueueModule(Module):
             # Create queue information
             message += (
                 f"\n\n{status_icon}{channel.mention} ({channel.name})"
-                f" - {player_count}/{max_player_count}\n"
+                f" - {player_count}/{max_player_count}"
             )
+
+            if event.gathered_at is not None:
+                message += f" <t:{math.trunc(event.gathered_at.timestamp())}:R>";
+            message += "\n"
+
             for i, player in enumerate(event.players):
                 mention = await self.mention(player.user)
 

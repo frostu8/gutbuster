@@ -46,6 +46,7 @@ class Event:
     format: EventFormat | None
     server: GameServer | None
     room: Room | Unset = UNSET
+    gathered_at: datetime | None = None
 
     def is_playing(self, user: User | str) -> bool:
         """
