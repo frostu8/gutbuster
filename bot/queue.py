@@ -17,6 +17,7 @@ import mogidb
 from bot.app import Module
 from bot.config import Config
 from bot.find_server import find_server
+from bot.notify import NotificationQueue
 from bot.ui import FormatSelector, FormatVote, QueueStatus
 from mogidb.model import (
     Event,
@@ -244,13 +245,29 @@ class QueueModule(Module):
     command_can: app_commands.AppCommand | None
     command_drop: app_commands.AppCommand | None
 
-    def __init__(self, config: Config, client: discord.Client, db: mogidb.Client, sqldb: AsyncEngine):
+    _queue: NotificationQueue
+
+    def __init__(
+        self,
+        config: Config,
+        client: discord.Client,
+        db: mogidb.Client,
+        sqldb: AsyncEngine,
+        *,
+        queue: NotificationQueue | None,
+    ):
         self.config = config
         self.db = db
         self.sqldb = sqldb
         self.client = client
 
         self.activity = ActivityTracker(db, client)
+
+        # Setup queue, or use a no-op queue
+        if queue is None:
+            self._queue = NotificationQueue()
+        else:
+            self._queue = queue
 
         self.command_can = None
         self.commnd_drop = None
@@ -276,6 +293,31 @@ class QueueModule(Module):
 
     async def on_interaction(self, interaction: discord.Interaction):
         await self.activity.on_interaction(interaction)
+
+    async def notify_waiting(
+        self,
+        room: Room,
+        *,
+        client: discord.Client,
+    ):
+        """
+        Notifies waiting users in a room.
+        """
+
+        channel = client.get_channel(room.id)
+        if not isinstance(channel, discord.TextChannel):
+            channel = await client.fetch_channel(room.id)
+        if not isinstance(channel, discord.TextChannel):
+            raise TypeError("Mogi can only take place in a guild channel")
+
+        users = self._queue.drain(room)
+        if len(users) > 0:
+            pings = ' '.join(user.mention for user in users)
+        
+            await channel.send(
+                content=pings,
+                allowed_mentions=AllowedMentions(users=users),
+            )
 
     async def ping_subjects(
         self,
@@ -969,6 +1011,9 @@ class QueueModule(Module):
             f"\nJoin a new queue with </c:{self.command_can.id}>!",
         )
 
+        # Notify waiting users
+        await self.notify_waiting(room, client=interaction.client)
+
 
     @app_commands.command(name="end", description="Ends the current mogi")
     async def end(self, interaction: discord.Interaction):
@@ -1051,9 +1096,10 @@ class QueueModule(Module):
         # Close the mogi
         await self.db.update_event(room.guild.id, room.id, event.id, status=EventStatus.CONCLUDED)
 
-        await interaction.response.send_message(
-            "The mogi queue has been cleared.",
-        )
+        await interaction.response.send_message("The mogi queue has been cleared.")
+
+        # Notify waiting users
+        await self.notify_waiting(room, client=interaction.client)
 
     @app_commands.command(name="remove", description="Removes a player from the queue")
     @default_permissions(None)

@@ -1,3 +1,4 @@
+from bot.notify import NotificationQueue, NotifyModule
 import logging
 import os
 import sys
@@ -36,11 +37,14 @@ intents = discord.Intents.default()
 app = App(intents=intents)
 
 # Load commands
+notification_queue = NotificationQueue()
+
 app.add_module(RoomModule(db))
 app.add_module(RoomConfigModule(db))
 app.add_module(FormatConfigModule(db))
-app.add_module(QueueModule(config, app, db, sqldb))
+app.add_module(QueueModule(config, app, db, sqldb, queue=notification_queue))
 app.add_module(ServerModule(config, db, sqldb, app))
+app.add_module(NotifyModule(app, db, queue=notification_queue))
 
 
 # Fetch our token
