@@ -14,9 +14,11 @@ from discord.app_commands import default_permissions
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 import mogidb
+from bot import flavor_text
 from bot.app import Module
 from bot.config import Config
 from bot.find_server import find_server
+from bot.flavor_text import Formatter
 from bot.notify import NotificationQueue
 from bot.ui import FormatSelector, FormatVote, QueueStatus
 from mogidb.model import (
@@ -247,6 +249,8 @@ class QueueModule(Module):
 
     _queue: NotificationQueue
 
+    _gathered_messages: list[flavor_text.FormatString]
+
     def __init__(
         self,
         config: Config,
@@ -268,6 +272,9 @@ class QueueModule(Module):
             self._queue = NotificationQueue()
         else:
             self._queue = queue
+
+        # Load messages
+        self._gathered_messages = [flavor_text.parse(text) for text in config.messages.gathered]
 
         self.command_can = None
         self.commnd_drop = None
@@ -510,7 +517,10 @@ class QueueModule(Module):
         # Add a special message to make this Mogi feel extra special <3
         flavor_text = None
         if len(self.config.messages.gathered) > 0:
-            flavor_text = random.choice(self.config.messages.gathered)
+            format_str = random.choice(self._gathered_messages)
+            formatter = Formatter(users=[user for user in users_by_id.values()])
+
+            flavor_text = format_str.format(formatter)
 
         if event.room.format_selection_mode == FormatSelectionMode.VOTE:
             await self.start_vote(event, client=client, flavor_text=flavor_text)
